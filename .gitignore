@@ -141,3 +141,6 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# clasp 認証情報（絶対にGit管理しない）
+.clasprc.json
