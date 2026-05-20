@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<meta charset="UTF-8">
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Yu Gothic", sans-serif;
+    margin: 0;
+    padding: 20px;
+    background: #f5f5f5;
+    color: #333;
+  }
+  h1 {
+    font-size: 22px;
+    margin: 0 0 20px;
+    color: #2c3e50;
+  }
+  h2 {
+    font-size: 18px;
+    margin: 24px 0 12px;
+    color: #34495e;
+  }
+  .summary {
+    background: white;
+    padding: 16px 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+  .summary-item {
+    display: inline-block;
+    margin-right: 24px;
+  }
+  .summary-label {
+    font-size: 13px;
+    color: #7f8c8d;
+    margin-right: 8px;
+  }
+  .summary-value {
+    font-size: 24px;
+    font-weight: 600;
+    color: #2c3e50;
+  }
+  table {
+    width: 100%;
+    background: white;
+    border-collapse: collapse;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+  th {
+    background: #ecf0f1;
+    padding: 12px;
+    text-align: left;
+    font-size: 13px;
+    color: #555;
+    border-bottom: 1px solid #ddd;
+  }
+  td {
+    padding: 12px;
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 14px;
+  }
+  tr:last-child td {
+    border-bottom: none;
+  }
+  .type-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .type-jido {
+    background: #e8f4f8;
+    color: #2980b9;
+  }
+  .type-choku {
+    background: #fef5e7;
+    color: #d68910;
+  }
+  .student-list {
+    color: #555;
+    font-size: 13px;
+  }
+  .btn {
+    padding: 6px 14px;
+    background: #3498db;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .btn:hover {
+    background: #2980b9;
+  }
+  .btn:disabled {
+    background: #bdc3c7;
+    cursor: not-allowed;
+  }
+  .loading {
+    text-align: center;
+    padding: 40px;
+    color: #7f8c8d;
+  }
+  .empty {
+    text-align: center;
+    padding: 40px;
+    color: #7f8c8d;
+    background: white;
+    border-radius: 8px;
+  }
+  
+  /* モーダル */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 100;
+    justify-content: center;
+    align-items: center;
+  }
+  .modal-overlay.active {
+    display: flex;
+  }
+  .modal {
+    background: white;
+    border-radius: 8px;
+    padding: 24px;
+    width: 90%;
+    max-width: 560px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+  }
+  .modal-title {
+    font-size: 18px;
+    margin: 0 0 12px;
+    color: #2c3e50;
+  }
+  .modal-subtitle {
+    font-size: 14px;
+    color: #7f8c8d;
+    margin: 0 0 16px;
+  }
+  .modal-url-box {
+    background: #f8f9fa;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 12px;
+    font-family: ui-monospace, "SF Mono", monospace;
+    font-size: 13px;
+    word-break: break-all;
+    margin-bottom: 16px;
+    color: #2c3e50;
+  }
+  .modal-btns {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+  .btn-secondary {
+    background: white;
+    color: #555;
+    border: 1px solid #ddd;
+  }
+  .btn-secondary:hover {
+    background: #f5f5f5;
+  }
+  .btn-success {
+    background: #27ae60;
+  }
+  .btn-success:hover {
+    background: #229954;
+  }
+  .copy-feedback {
+    color: #27ae60;
+    font-size: 13px;
+    margin-left: 8px;
+    display: none;
+  }
+  .copy-feedback.active {
+    display: inline;
+  }
+</style>
+</head>
+<body>
+  <h1>billing-line 管理画面</h1>
+  
+  <div class="summary">
+    <div class="summary-item">
+      <span class="summary-label">未登録家族</span>
+      <span class="summary-value" id="unregistered-count">-</span>
+    </div>
+  </div>
+  
+  <h2>未登録家族一覧</h2>
+  <div id="content">
+    <div class="loading">読み込み中...</div>
+  </div>
+  
+  <!-- URL発行モーダル -->
+  <div class="modal-overlay" id="url-modal">
+    <div class="modal">
+      <h3 class="modal-title" id="modal-title">登録URL発行</h3>
+      <p class="modal-subtitle" id="modal-subtitle"></p>
+      <div class="modal-url-box" id="modal-url"></div>
+      <div class="modal-btns">
+        <span class="copy-feedback" id="copy-feedback">コピーしました</span>
+        <button class="btn btn-secondary" onclick="closeModal()">閉じる</button>
+        <button class="btn btn-success" onclick="copyUrl()">URLをコピー</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  window.addEventListener('load', loadUnregisteredFamilies);
+  
+  function loadUnregisteredFamilies() {
+    google.script.run
+      .withSuccessHandler(renderFamilies)
+      .withFailureHandler(handleError)
+      .getUnregisteredFamilies();
+  }
+  
+  function renderFamilies(families) {
+    document.getElementById('unregistered-count').textContent = families.length;
+    
+    if (families.length === 0) {
+      document.getElementById('content').innerHTML = 
+        '<div class="empty">全家族が登録済みです 🎉</div>';
+      return;
+    }
+    
+    let html = '<table>';
+    html += '<thead><tr>';
+    html += '<th>家族ID</th><th>宛名</th><th>区分</th><th>生徒</th><th>操作</th>';
+    html += '</tr></thead><tbody>';
+    
+    families.forEach(f => {
+      const typeBadge = f.type === '自' 
+        ? '<span class="type-badge type-jido">自動引落</span>'
+        : '<span class="type-badge type-choku">直接持参</span>';
+      
+      const studentList = f.students
+        .map(s => `${s.grade} ${s.name}`)
+        .join(' / ');
+      
+      html += '<tr>';
+      html += `<td>${f.familyId}</td>`;
+      html += `<td>${f.name}</td>`;
+      html += `<td>${typeBadge}</td>`;
+      html += `<td class="student-list">${studentList}</td>`;
+      html += `<td><button class="btn" onclick="issueUrl('${f.familyId}', '${f.name}')">URL発行</button></td>`;
+      html += '</tr>';
+    });
+    
+    html += '</tbody></table>';
+    document.getElementById('content').innerHTML = html;
+  }
+  
+  function issueUrl(familyId, familyName) {
+    // ボタンを一時無効化
+    document.querySelectorAll('.btn').forEach(b => b.disabled = true);
+    
+    google.script.run
+      .withSuccessHandler(showUrlModal)
+      .withFailureHandler(handleIssueError)
+      .issueTokenForFamily(familyId);
+  }
+  
+  function showUrlModal(result) {
+    document.getElementById('modal-title').textContent = result.familyName + ' の登録URL';
+    document.getElementById('modal-subtitle').textContent = 'このURLを保護者にLINE等で送ってください';
+    document.getElementById('modal-url').textContent = result.url;
+    document.getElementById('url-modal').classList.add('active');
+    document.getElementById('copy-feedback').classList.remove('active');
+    
+    // ボタン再有効化
+    document.querySelectorAll('.btn').forEach(b => b.disabled = false);
+  }
+  
+  function handleIssueError(error) {
+    alert('エラー: ' + error.message);
+    document.querySelectorAll('.btn').forEach(b => b.disabled = false);
+  }
+  
+  function closeModal() {
+    document.getElementById('url-modal').classList.remove('active');
+  }
+  
+  function copyUrl() {
+    const url = document.getElementById('modal-url').textContent;
+    navigator.clipboard.writeText(url).then(() => {
+      const feedback = document.getElementById('copy-feedback');
+      feedback.classList.add('active');
+      setTimeout(() => feedback.classList.remove('active'), 2000);
+    });
+  }
+  
+  function handleError(error) {
+    document.getElementById('content').innerHTML = 
+      '<div class="empty">エラー: ' + error.message + '</div>';
+  }
+</script>
+</body>
+</html>
