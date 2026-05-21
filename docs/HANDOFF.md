@@ -1,7 +1,7 @@
 # 引き継ぎメモ
 
 ## 最終更新
-2026-05-22 塾PC作業終了時点
+2026-05-22 自宅PC作業終了時点
 
 ## 現状サマリー
 
@@ -14,57 +14,27 @@
 - ✅ **Phase 2B Step 1**：管理画面の骨格＋未登録家族リスト
 - ✅ **Phase 2B Step 2**：個別URL発行機能
 - ✅ **Phase 2B Step 3**：保護者登録画面の骨格
-- ✅ **Phase 2B Step 4**：LINE Login OAuth処理 ← 今夜完成！
+- ✅ **Phase 2B Step 4**：LINE Login OAuth処理
+- ✅ **Phase 2B Step C**：管理画面に登録済み家族一覧・登録解除機能を追加 ← 今夜完成！
 
-### Phase 2B Step 4 で実装したこと
+### Phase 2B Step C で実装したこと
 
 **GAS（src/gas/コード.js 末尾に追加）：**
-- 定数：LINE_LOGIN_TEMP_TTL_SEC、AUTHORIZE_URL、TOKEN_URL、PROFILE_URL
-- `_getLineLoginChannelId/Secret`、`_getLineMessagingAccessToken`：スクリプトプロパティ取得
-- `_getWebAppUrl`、`_getCallbackUrl`：URL関連（access.line.me接続拒否対策）
-- `_saveTempLineToken`、`_getTempLineToken`、`_deleteTempLineToken`：CacheService管理
-- `_findFamilyByToken`：トークンから家族特定（Tokensシート参照）
-- `_renderLineLayoutHtml`、`_renderLineErrorHtml`、`_renderLineSuccessHtml`、`_renderLineConfirmHtml`：HTML生成
-- `_handleLineLoginStart`：LINE認証ページへリダイレクト
-- `_handleLineLoginCallback`：code→access_token→profile→userId取得
-- `_handleLineLoginRegister`：Familiesシートに書き込み、Tokensシート更新
-- `doGet()`：?action=lineLogin* で振り分け
-- `_testTriggerPermission`：権限承認発動用テスト関数
+- `getRegisteredFamilies()`：登録済み家族一覧API
+  - LINE_USER_IDの先頭8文字＋登録日を返す
+- `unregisterFamily(familyId)`：登録解除API
+  - Familiesシートの該当行のLINE_USER_IDと登録日を空にする
+- `testGetRegistered()`：動作確認用テスト関数
 
-**register.html：**
-- LINE Loginボタンの本実装
-- トークンを?action=lineLoginStart&token=XXXに渡す形
-
-**appsscript.json：**
-- oauthScopes 追加：
-  - script.external_request（UrlFetchApp用）
-  - spreadsheets（SpreadsheetApp.openById用）
-  - script.container.ui（HtmlService用）
-  - userinfo.email
-- webapp セクション：executeAs USER_DEPLOYING / access MYSELF
-
-**スクリプトプロパティ（追加）：**
-- WEB_APP_URL：billing-lineのWebアプリURL（access.line.me対策の核心）
-- LINE_LOGIN_CHANNEL_ID（マイ活と同値）
-- LINE_LOGIN_CHANNEL_SECRET（マイ活と同値）
-- LINE_MESSAGING_CHANNEL_ACCESS_TOKEN（マイ活と同値）
-
-**LINE Developers Console：**
-- コールバックURL に billing-line用を追加登録済み
-
-**UI改善：**
-- 「この内容で登録する」ボタン押下時の処理中表示・二度押し防止
+**admin.html：**
+- サマリーに「登録済み家族数」を追加
+- 「登録済み家族一覧」セクションを新設
+  - 家族ID、宛名、区分、生徒、LINE_USER_ID（先頭8文字）、登録日、登録解除ボタン
+- 登録解除フロー：確認ダイアログ→GAS呼び出し→アラート→一覧再読み込み
 
 ### 動作確認済み
 
-藤本様・山﨑様の2家族でテスト完了。以下が全て動作：
-- 管理画面でURL発行→保護者URL→LINE認証→確認画面→登録完了
-- Familiesシートに LINE_USER_ID 自動書き込み
-- Tokensシートの状態が「使用済」に更新
-- 管理画面で未登録家族数が自動減少
-- ボタン二度押し防止UI
-
-テスト後、シートはクリーンアップ済（再度テストデータのみの状態）。
+藤本様で登録→管理画面で確認→登録解除→未登録に戻る、の一連の動作OK。
 
 ### Phase 2B 残り
 
@@ -79,7 +49,8 @@
 - マイ活アプリのStudentsシートをベースに整理する想定
 
 **ID収集の運用開始**
-- Step 4 完成により、方式Aは完全稼働可能
+- 方式A（LINE Login OAuth）は完全稼働可能
+- 管理画面で登録状況も確認できるようになった（Step C完成）
 - ふくちさんが公式LINEで「次回からLINE配信」を一斉案内
 - 各保護者に個別URLを送付（管理画面で発行）
 
@@ -87,9 +58,8 @@
 
 ### リポジトリ
 - URL：https://github.com/k-acdm/billing-line
-- Visibility：Public（GitHub Pages無料利用のため）
+- Visibility：Public
 - ブランチ：dev / main
-- 最新コミット：3eceb03（Phase 2B Step 4実装後）+ UI改善追加分
 
 ### GASプロジェクト
 - 名前：billing-line
@@ -102,7 +72,7 @@
 ### スプレッドシート
 - billing-line-data：1XHy8nEx7sTaHIN3EmLPpNjJRd9kSWzFnXw_eBxS7eKQ
 - 7シート構成（Families/Students/Billings/BillingItems/FollowUps/Config/Tokens）
-- 現状：5家族のテストデータ、登録データは空
+- 現状：5家族のテストデータ、登録データは空（藤本様のテスト解除済み）
 
 ### LINE Developers Console
 - プロバイダー：春日部アカデミー
@@ -122,24 +92,28 @@
 3. `clasp push`（GAS変更時）
 4. GASエディタで「デプロイを管理」→既存デプロイを編集→「新バージョン」選択→デプロイ
 
-## 次回（自宅PC）の進め方
+## 次回（塾PC）の進め方
 
-### 選択肢
+### 第一候補：実保護者データの投入＋ID収集運用開始
 
-**A：Step 5（Webhook受信）に着手**
-- 公式LINEで保護者がメッセージ送信→ふくちさんが手動紐付け
-- 60〜90分
+**STEP 1：本データ投入の準備（30分）**
+- マイ活Studentsシートから49家族分のデータを整理
+- Familiesシート用のデータ作成（家族ID/宛名/配信区分）
+- Studentsシート用のデータ作成（生徒ID/家族ID/学年/生徒氏名/兄弟順位/在籍フラグ）
 
-**B：実保護者データの投入＋ID収集運用開始**
-- Familiesシート・Studentsシートに49家族分の本データ投入
-- ふくちさんが公式LINEで一斉案内
-- 各保護者に個別URLを送付開始
-- データ投入次第、所要時間は変動
+**STEP 2：データ投入（15分）**
+- スプレッドシートに一括投入
+- 管理画面で正しく表示されるか確認
 
-**C：管理画面の使い勝手改善**
-- 登録済み家族の表示・統計
-- 取り消し機能
-- 30〜45分
+**STEP 3：ID収集運用開始（20分）**
+- 公式LINEで一斉案内文を準備
+- ふくちさんが配信
+- 反応を見ながら個別URL送付
+
+### 第二候補：Step 5（Webhook受信）
+
+公式LINEメッセージ受信での紐付け方式。方式Aで取り切れない保護者向け。
+- 所要：60〜90分
 
 ### 再開時の標準手順
 cd ~/billing-line
@@ -152,28 +126,6 @@ git pull origin dev
 - 引き継ぎメモ（このファイル）：`docs/HANDOFF.md`
 - マイ活の参照箇所：`mykt-eitango/gas/Code.js` の L19000〜L19560
 - 過去Excel：`引落額通知_DATA_22-04_.xlsx`
-- 過去Wordテンプレ：`引落額通知_送信用フォーム_引落.docx` / `_直払.docx`
-
-## 重要な技術的知見（今夜得た学び）
-
-### GASのoauthScopes問題
-
-- `appsscript.json` に `oauthScopes` を明示すると、配列内のものしか許可されない
-- 暗黙の自動検出に頼るより、明示する方が確実だが、スコープ名を正確に書く必要がある
-- 必須：`script.external_request`、`spreadsheets`（currentonlyではダメ）、`script.container.ui`、`userinfo.email`
-- `spreadsheets.currentonly` は openById では使えない（注意）
-
-### access.line.me 接続拒否対策
-
-- `ScriptApp.getService().getUrl()` は環境によって /dev URL を返すバグがある
-- スクリプトプロパティ `WEB_APP_URL` に本番URLを保存して、そこから取得するのが確実
-- billing-line でも同方式を採用済み
-
-### UI改善のポイント
-
-- フォーム送信中は数秒かかるため、ボタンの状態変化を即座に見せる必要あり
-- 「⏳ 登録中...」+ disabled + pointer-events:none で二度押し防止
-- 押した感覚を保護者に与えるのが重要
 
 ## Phase進捗マップ
 ✅ Phase 0：環境構築
@@ -183,7 +135,9 @@ git pull origin dev
 ✅ Phase 2B Step 1：管理画面骨格・未登録家族リスト
 ✅ Phase 2B Step 2：個別URL発行機能
 ✅ Phase 2B Step 3：保護者登録画面の骨格
-✅ Phase 2B Step 4：LINE Login OAuth処理 ← 今夜完成！
+✅ Phase 2B Step 4：LINE Login OAuth処理
+✅ Phase 2B Step C：登録済み家族一覧・解除機能 ← 今夜完成！
+🔜 実保護者データ投入＋ID収集運用開始（次回最優先候補）
 🔜 Phase 2B Step 5：Webhook受信
 🔜 Phase 2B Step 6：未紐付けメッセージ画面
 🔜 Phase 3：管理画面・配信エンジン
