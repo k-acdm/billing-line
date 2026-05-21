@@ -1,7 +1,7 @@
 # 引き継ぎメモ
 
 ## 最終更新
-2026-05-21 塾PC作業（並行作業中）終了時点
+2026-05-22 塾PC作業終了時点
 
 ## 現状サマリー
 
@@ -13,139 +13,167 @@
 - ✅ **Phase 1C**：スプレッドシート構築・GAS接続確認
 - ✅ **Phase 2B Step 1**：管理画面の骨格＋未登録家族リスト
 - ✅ **Phase 2B Step 2**：個別URL発行機能
-- ✅ **Phase 2B Step 3**：保護者登録画面の骨格（GitHub Pages公開済）
+- ✅ **Phase 2B Step 3**：保護者登録画面の骨格
+- ✅ **Phase 2B Step 4**：LINE Login OAuth処理 ← 今夜完成！
 
-### Phase 2B Step 4：着手準備完了、本実装はこれから
+### Phase 2B Step 4 で実装したこと
 
-**Step 4 で完了している準備作業：**
-- ✅ マイ活側のLINE Login OAuth実装の解析完了
-- ✅ スクリプトプロパティ設定完了
-  - LINE_LOGIN_CHANNEL_ID（マイ活と同値）
-  - LINE_LOGIN_CHANNEL_SECRET（マイ活と同値）
-  - LINE_MESSAGING_CHANNEL_ACCESS_TOKEN（マイ活と同値）
-- ✅ LINE Developers Console にコールバックURL追加完了
-  - 春日部アカデミー > LINEログイン > 「LINEログイン設定」タブ
-  - 既存（マイ活用）と並列で billing-line 用URLを追加
-  - 追加URL：https://script.google.com/macros/s/AKfycbyWqIdWCDoj9QY0FDtX5YaiuhSKyf57NyEpmranwzOhAww73bk4VDs6RF2IukFpDw7k/exec?action=lineLoginCallback
+**GAS（src/gas/コード.js 末尾に追加）：**
+- 定数：LINE_LOGIN_TEMP_TTL_SEC、AUTHORIZE_URL、TOKEN_URL、PROFILE_URL
+- `_getLineLoginChannelId/Secret`、`_getLineMessagingAccessToken`：スクリプトプロパティ取得
+- `_getWebAppUrl`、`_getCallbackUrl`：URL関連（access.line.me接続拒否対策）
+- `_saveTempLineToken`、`_getTempLineToken`、`_deleteTempLineToken`：CacheService管理
+- `_findFamilyByToken`：トークンから家族特定（Tokensシート参照）
+- `_renderLineLayoutHtml`、`_renderLineErrorHtml`、`_renderLineSuccessHtml`、`_renderLineConfirmHtml`：HTML生成
+- `_handleLineLoginStart`：LINE認証ページへリダイレクト
+- `_handleLineLoginCallback`：code→access_token→profile→userId取得
+- `_handleLineLoginRegister`：Familiesシートに書き込み、Tokensシート更新
+- `doGet()`：?action=lineLogin* で振り分け
+- `_testTriggerPermission`：権限承認発動用テスト関数
 
-**Step 4 で実装すべき関数（マイ活コードを移植）：**
+**register.html：**
+- LINE Loginボタンの本実装
+- トークンを?action=lineLoginStart&token=XXXに渡す形
 
-マイ活 Code.js の以下行から移植：
-- L19114-19119：スクリプトプロパティ取得関数（_getLineLoginChannelId 等）
-- L19125-19156：CacheService による一時トークン管理
-- L19180-19191：_lineRedirectUri()
-- L19192-19292：HTML レンダリング系（_renderLineLayoutHtml 等）
-- L19293-19470：OAuth 本体処理
-  - _handleLineLoginStart()
-  - _handleLineLoginCallback()
-  - _handleLineLoginRegister()
-  - _handleLineRawAction()
+**appsscript.json：**
+- oauthScopes 追加：
+  - script.external_request（UrlFetchApp用）
+  - spreadsheets（SpreadsheetApp.openById用）
+  - script.container.ui（HtmlService用）
+  - userinfo.email
+- webapp セクション：executeAs USER_DEPLOYING / access MYSELF
 
-**billing-line 側で変更が必要な箇所：**
-- マイ活では「役割（生徒/保護者）」を引数 → billing-line では「家族ID」を引数
-- マイ活では Studentsシートに書き込み → billing-line では Familiesシートの「保護者LINE_USER_ID」列に書き込み
-- 家族ID の検証にトークンを使う（Tokensシート参照）
+**スクリプトプロパティ（追加）：**
+- WEB_APP_URL：billing-lineのWebアプリURL（access.line.me対策の核心）
+- LINE_LOGIN_CHANNEL_ID（マイ活と同値）
+- LINE_LOGIN_CHANNEL_SECRET（マイ活と同値）
+- LINE_MESSAGING_CHANNEL_ACCESS_TOKEN（マイ活と同値）
+
+**LINE Developers Console：**
+- コールバックURL に billing-line用を追加登録済み
+
+**UI改善：**
+- 「この内容で登録する」ボタン押下時の処理中表示・二度押し防止
+
+### 動作確認済み
+
+藤本様・山﨑様の2家族でテスト完了。以下が全て動作：
+- 管理画面でURL発行→保護者URL→LINE認証→確認画面→登録完了
+- Familiesシートに LINE_USER_ID 自動書き込み
+- Tokensシートの状態が「使用済」に更新
+- 管理画面で未登録家族数が自動減少
+- ボタン二度押し防止UI
+
+テスト後、シートはクリーンアップ済（再度テストデータのみの状態）。
 
 ### Phase 2B 残り
 
-- 🔜 **Step 4**：LINE Login OAuth処理（本実装）← 次ここから
 - 🔜 **Step 5**：Webhook受信（方式B用）
 - 🔜 **Step 6**：未紐付けメッセージ画面＋紐付け確定
 
-## 設計の重要ポイント
+### 並行して検討すべきこと
 
-### マイ活のOAuthフロー（移植元）
+**実保護者データの投入**
+- 現在5家族のテストデータのみ
+- 49家族分の本データ投入は別途まとまった時間が必要
+- マイ活アプリのStudentsシートをベースに整理する想定
 
-ユーザーが LINE Login ボタンをタップ
-GAS の doGet?action=lineLoginStart へ
-LINE 認証ページへリダイレクト（HTTP 302）
-ユーザー認証
-callback URL に code 付きで戻る
-= doGet?action=lineLoginCallback&code=xxx
-GAS が code → access_token → profile → userId を取得
-tempToken（UUID）で CacheService に5分間保存
-登録確認フォーム表示
-ユーザーが「登録」ボタン
-doGet?action=lineLoginRegister&tempToken=xxx
-スプレッドシートに書き込み
-完了画面
-
-
-### billing-line でのフロー
-
-保護者が個別URL（register.html?t=xxx）をタップ
-register.html が表示される
-「LINEで登録する」ボタンをタップ
-GAS billing-line の doGet?action=lineLoginStart&token=xxx へ
-※トークンを引き渡す必要あり（家族IDの特定のため）
-5-11) マイ活と同様のフロー
-Familiesシートの該当家族IDの行に LINE_USER_ID を書き込み
-Tokensシートの該当トークンを「使用済」に更新
-完了画面
-
+**ID収集の運用開始**
+- Step 4 完成により、方式Aは完全稼働可能
+- ふくちさんが公式LINEで「次回からLINE配信」を一斉案内
+- 各保護者に個別URLを送付（管理画面で発行）
 
 ## 環境情報
 
 ### リポジトリ
 - URL：https://github.com/k-acdm/billing-line
-- Visibility：**Public**（GitHub Pages無料利用のため）
+- Visibility：Public（GitHub Pages無料利用のため）
 - ブランチ：dev / main
-- 最新コミット：5fd9f14（Phase 2B Step 3完了時）
-
-### ローカルパス
-- 自宅PC：`C:\Users\Manager\billing-line`
-- 塾PC：`C:\Users\Manager\billing-line`
+- 最新コミット：3eceb03（Phase 2B Step 4実装後）+ UI改善追加分
 
 ### GASプロジェクト
 - 名前：billing-line
 - スクリプトID：1tJRXW2lKU3y2H3Dw1Ne8VMgdSLISGFJUdhXEraJML3HqWx_4r523epHF
 - Webアプリ URL：https://script.google.com/macros/s/AKfycbyWqIdWCDoj9QY0FDtX5YaiuhSKyf57NyEpmranwzOhAww73bk4VDs6RF2IukFpDw7k/exec
-- 認証：自分のみ・自分として実行
 
 ### GitHub Pages URL
-- https://k-acdm.github.io/billing-line/register.html?t=【トークン】
+- 保護者登録画面：https://k-acdm.github.io/billing-line/register.html?t=【トークン】
 
 ### スプレッドシート
 - billing-line-data：1XHy8nEx7sTaHIN3EmLPpNjJRd9kSWzFnXw_eBxS7eKQ
-- 7シート構成
+- 7シート構成（Families/Students/Billings/BillingItems/FollowUps/Config/Tokens）
+- 現状：5家族のテストデータ、登録データは空
 
 ### LINE Developers Console
 - プロバイダー：春日部アカデミー
-- LINEログインチャネル：マイ活と共用（同じChannel ID/Secret）
-- コールバックURL：マイ活用URL + billing-line用URL の2件登録済
+- LINEログインチャネル：マイ活と共用
+- Messaging APIチャネル：春日部アカデミー公式（@pwg1825g）
+- コールバックURL：マイ活用URL + billing-line用URL 登録済
 
 ## 運用ルール
 
-### dev/main 切替（マイ活と同じ）
+### dev/main 切替
 **再開時：**`git checkout dev` → `git pull origin dev`
 **終了時：**`git pull origin dev` → `git checkout main` → `git merge dev` → `git push origin main` → `git checkout dev`
 
 ### 本番反映4ステップ
 1. `git pull origin dev`
-2. `git checkout main` → `git merge dev` → `git push origin main`（GitHub Pages反映 = register.html等）
+2. `git checkout main` → `git merge dev` → `git push origin main`（GitHub Pages反映）
 3. `clasp push`（GAS変更時）
 4. GASエディタで「デプロイを管理」→既存デプロイを編集→「新バージョン」選択→デプロイ
 
-## Step 4 着手の最初の手順
+## 次回（自宅PC）の進め方
+
+### 選択肢
+
+**A：Step 5（Webhook受信）に着手**
+- 公式LINEで保護者がメッセージ送信→ふくちさんが手動紐付け
+- 60〜90分
+
+**B：実保護者データの投入＋ID収集運用開始**
+- Familiesシート・Studentsシートに49家族分の本データ投入
+- ふくちさんが公式LINEで一斉案内
+- 各保護者に個別URLを送付開始
+- データ投入次第、所要時間は変動
+
+**C：管理画面の使い勝手改善**
+- 登録済み家族の表示・統計
+- 取り消し機能
+- 30〜45分
 
 ### 再開時の標準手順
 cd ~/billing-line
 git checkout dev
 git pull origin dev
 
-### Step 4 実装の進め方
-1. マイ活 Code.js から LINE Login 関連関数を `/tmp/line_login_extract.txt` に再抽出
-2. billing-line の `src/gas/コード.js` の末尾に追加
-3. 家族ID対応に書き換え
-4. register.html を更新（LINE Loginボタンを本物のリンクに）
-5. clasp push → デプロイ → 動作確認
+## 困った時の参考
 
-### 動作確認方法
-1. 管理画面で F001（藤本様）の URL発行
-2. 発行されたURLを別タブで開く
-3. 「LINEで登録する」ボタンを押下
-4. LINE認証ページへ遷移すれば成功
-5. 認証後、Familiesシートに LINE_USER_ID が書き込まれているか確認
+- 設計書：`docs/SYSTEM_DESIGN.md`、`docs/PHASE_2B_DESIGN.md`
+- 引き継ぎメモ（このファイル）：`docs/HANDOFF.md`
+- マイ活の参照箇所：`mykt-eitango/gas/Code.js` の L19000〜L19560
+- 過去Excel：`引落額通知_DATA_22-04_.xlsx`
+- 過去Wordテンプレ：`引落額通知_送信用フォーム_引落.docx` / `_直払.docx`
+
+## 重要な技術的知見（今夜得た学び）
+
+### GASのoauthScopes問題
+
+- `appsscript.json` に `oauthScopes` を明示すると、配列内のものしか許可されない
+- 暗黙の自動検出に頼るより、明示する方が確実だが、スコープ名を正確に書く必要がある
+- 必須：`script.external_request`、`spreadsheets`（currentonlyではダメ）、`script.container.ui`、`userinfo.email`
+- `spreadsheets.currentonly` は openById では使えない（注意）
+
+### access.line.me 接続拒否対策
+
+- `ScriptApp.getService().getUrl()` は環境によって /dev URL を返すバグがある
+- スクリプトプロパティ `WEB_APP_URL` に本番URLを保存して、そこから取得するのが確実
+- billing-line でも同方式を採用済み
+
+### UI改善のポイント
+
+- フォーム送信中は数秒かかるため、ボタンの状態変化を即座に見せる必要あり
+- 「⏳ 登録中...」+ disabled + pointer-events:none で二度押し防止
+- 押した感覚を保護者に与えるのが重要
 
 ## Phase進捗マップ
 ✅ Phase 0：環境構築
@@ -155,16 +183,8 @@ git pull origin dev
 ✅ Phase 2B Step 1：管理画面骨格・未登録家族リスト
 ✅ Phase 2B Step 2：個別URL発行機能
 ✅ Phase 2B Step 3：保護者登録画面の骨格
-🔜 Phase 2B Step 4：LINE Login OAuth処理 ← イマココ準備完了、本実装これから
+✅ Phase 2B Step 4：LINE Login OAuth処理 ← 今夜完成！
 🔜 Phase 2B Step 5：Webhook受信
 🔜 Phase 2B Step 6：未紐付けメッセージ画面
 🔜 Phase 3：管理画面・配信エンジン
 🔜 Phase 4：滞納フォロー機能
-
-## 困った時の参考
-
-- 設計書：`docs/SYSTEM_DESIGN.md`、`docs/PHASE_2B_DESIGN.md`
-- 引き継ぎメモ（このファイル）：`docs/HANDOFF.md`
-- マイ活の参照箇所：`mykt-eitango/gas/Code.js` の L19114〜L19470
-- 過去Excel：`引落額通知_DATA_22-04_.xlsx`
-- 過去Wordテンプレ：`引落額通知_送信用フォーム_引落.docx` / `_直払.docx`

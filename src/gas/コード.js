@@ -571,12 +571,26 @@ function _renderLineConfirmHtml(tempToken, family, displayName) {
       '<p style="margin: 0 0 8px; font-weight: bold; color: #1f2937;">' + _escapeHtmlMinimal(family.familyName) + '</p>' +
       studentsHtml +
     '</div>' +
-    '<form method="get" target="_top" action="' + _escapeHtmlMinimal(formAction) + '">' +
+    '<form id="register-form" method="get" target="_top" action="' + _escapeHtmlMinimal(formAction) + '" onsubmit="return handleSubmit(this);">' +
     '<input type="hidden" name="action" value="lineLoginRegister"/>' +
     '<input type="hidden" name="tempToken" value="' + _escapeHtmlMinimal(tempToken) + '"/>' +
-    '<button class="btn-line" type="submit">この内容で登録する</button>' +
+    '<button id="register-btn" class="btn-line" type="submit">この内容で登録する</button>' +
     '</form>' +
-    '<p class="small-note">※ 5 分以内に「登録する」ボタンを押してください。期限切れの場合は最初の登録URLからやり直してください。</p>';
+    '<p class="small-note">※ 5 分以内に「登録する」ボタンを押してください。期限切れの場合は最初の登録URLからやり直してください。</p>' +
+    '<style>' +
+      '.btn-line.processing { background: #9ca3af !important; cursor: wait !important; pointer-events: none; }' +
+      '.btn-line.processing::before { content: "⏳ "; }' +
+    '</style>' +
+    '<script>' +
+      'function handleSubmit(form) {' +
+        'var btn = document.getElementById("register-btn");' +
+        'if (btn.disabled) return false;' +
+        'btn.disabled = true;' +
+        'btn.classList.add("processing");' +
+        'btn.innerText = "登録中... しばらくお待ちください";' +
+        'return true;' +
+      '}' +
+    '<' + '/script>';
   return _renderLineLayoutHtml('登録確認', body);
 }
 
@@ -668,4 +682,21 @@ function _handleLineLoginRegister(params) {
 
   _deleteTempLineToken(tempToken);
   return _renderLineSuccessHtml(familyName, displayName);
+}
+
+/**
+ * 権限承認発動用：UrlFetchAppを実際に呼び出して権限ダイアログを出す
+ */
+function _testTriggerPermission() {
+  try {
+    var res = UrlFetchApp.fetch('https://api.line.me/v2/profile', {
+      method: 'get',
+      headers: { Authorization: 'Bearer dummy_token' },
+      muteHttpExceptions: true
+    });
+    Logger.log('Response code: ' + res.getResponseCode());
+    Logger.log('成功（権限OK）');
+  } catch (e) {
+    Logger.log('エラー：' + e.toString());
+  }
 }
