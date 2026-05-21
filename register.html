@@ -12,7 +12,7 @@
   }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
-    background: #f5f7fa;
+    background: linear-gradient(135deg, #fff7ed, #fef3c7);
     color: #2c3e50;
     line-height: 1.6;
     min-height: 100vh;
@@ -38,9 +38,9 @@
   }
   .card {
     background: white;
-    border-radius: 12px;
-    padding: 24px 20px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    border-radius: 16px;
+    padding: 28px 22px;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.10);
     margin-bottom: 16px;
   }
   .loading {
@@ -49,11 +49,13 @@
     color: #7f8c8d;
   }
   .error {
-    color: #c0392b;
-    background: #fef0ef;
+    color: #b91c1c;
+    background: #fee2e2;
+    border: 1.5px solid #f87171;
     padding: 16px;
-    border-radius: 8px;
+    border-radius: 10px;
     text-align: center;
+    line-height: 1.7;
   }
   .family-confirm {
     text-align: center;
@@ -71,64 +73,48 @@
   }
   .student-section {
     background: #f8f9fa;
-    border-radius: 8px;
+    border-radius: 10px;
     padding: 16px;
-    margin: 16px 0;
+    margin: 20px 0;
+    text-align: left;
   }
   .student-section-label {
     font-size: 12px;
     color: #7f8c8d;
     margin-bottom: 8px;
+    font-weight: 500;
   }
   .student-item {
     font-size: 15px;
     color: #2c3e50;
-    margin: 4px 0;
+    margin: 6px 0;
+    padding-left: 8px;
   }
   .btn-primary {
     display: block;
     width: 100%;
-    background: #00b900;
+    background: linear-gradient(135deg, #06c755, #04a64b);
     color: white;
     padding: 16px;
     border: none;
-    border-radius: 8px;
+    border-radius: 12px;
     font-size: 16px;
     font-weight: 600;
     cursor: pointer;
-    margin-top: 16px;
+    margin-top: 20px;
+    text-decoration: none;
+    box-shadow: 0 4px 12px rgba(6,199,85,.3);
   }
   .btn-primary:hover {
-    background: #009900;
-  }
-  .btn-primary:disabled {
-    background: #bdc3c7;
-    cursor: not-allowed;
+    background: linear-gradient(135deg, #04a64b, #038c3f);
   }
   .notice {
     font-size: 12px;
-    color: #7f8c8d;
+    color: #888;
     text-align: center;
     margin-top: 16px;
     padding: 0 8px;
-  }
-  .completed {
-    text-align: center;
-    padding: 24px;
-  }
-  .completed-icon {
-    font-size: 48px;
-    margin-bottom: 16px;
-  }
-  .completed-title {
-    font-size: 18px;
-    font-weight: 600;
-    margin-bottom: 8px;
-    color: #2c3e50;
-  }
-  .completed-message {
-    font-size: 14px;
-    color: #555;
+    line-height: 1.7;
   }
 </style>
 </head>
@@ -145,8 +131,8 @@
   </div>
 
 <script>
-  // GASのウェブアプリURL（後で更新する）
-  const GAS_URL = 'PLACEHOLDER_GAS_URL';
+  // billing-lineのGAS WebアプリURL
+  const GAS_URL = 'https://script.google.com/macros/s/AKfycbyWqIdWCDoj9QY0FDtX5YaiuhSKyf57NyEpmranwzOhAww73bk4VDs6RF2IukFpDw7k/exec';
   
   // URLからトークンを取り出す
   function getToken() {
@@ -159,37 +145,31 @@
     const token = getToken();
     
     if (!token) {
-      showError('登録URLが正しくありません。<br>福地先生にお問い合わせください。');
+      showError('登録URLが正しくありません。<br>福地までお問い合わせください。');
       return;
     }
     
-    // トークンを検証して家族情報を取得
-    verifyToken(token);
+    // LINE Login ボタンを表示
+    showLoginButton(token);
   });
   
-  function verifyToken(token) {
-    // GAS側のverifyToken APIを呼び出す
-    // 注意：このURLはまだプレースホルダ。Step 4で実装。
-    
-    // 暫定的に「実装中」表示
-    showImplementationNotice(token);
-  }
-  
-  function showImplementationNotice(token) {
+  function showLoginButton(token) {
     const content = document.getElementById('content');
+    // GASに?action=lineLoginStart&token=XXX で遷移するURL
+    const loginUrl = GAS_URL + '?action=lineLoginStart&token=' + encodeURIComponent(token);
+    
     content.innerHTML = `
       <div class="family-confirm">
-        <p class="family-label">トークン確認</p>
-        <p class="family-name" style="font-size: 18px; word-break: break-all;">${token}</p>
-        <div class="student-section">
-          <p style="font-size: 14px; color: #7f8c8d;">
-            このページは現在実装中です。<br>
-            Step 4 で完成します。
-          </p>
-        </div>
-        <button class="btn-primary" disabled>LINEで登録する（実装中）</button>
+        <p style="font-size: 15px; color: #2c3e50; margin-bottom: 20px; line-height: 1.8;">
+          下のボタンを押すと、<br>
+          LINEで認証が始まります。
+        </p>
+        <a href="${loginUrl}" class="btn-primary">
+          LINEで登録する
+        </a>
         <p class="notice">
-          ※トークンが正しく取得できていることを確認しました
+          ※ 認証画面でLINEアカウントを選択し、<br>
+          「許可する」をタップしてください。
         </p>
       </div>
     `;
