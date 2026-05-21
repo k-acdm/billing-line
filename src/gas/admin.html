@@ -42,6 +42,9 @@
     font-weight: 600;
     color: #2c3e50;
   }
+  .summary-value.registered {
+    color: #27ae60;
+  }
   table {
     width: 100%;
     background: white;
@@ -49,6 +52,7 @@
     border-radius: 8px;
     overflow: hidden;
     box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    margin-bottom: 24px;
   }
   th {
     background: #ecf0f1;
@@ -85,6 +89,15 @@
     color: #555;
     font-size: 13px;
   }
+  .line-id {
+    color: #7f8c8d;
+    font-size: 12px;
+    font-family: ui-monospace, "SF Mono", monospace;
+  }
+  .registered-date {
+    color: #7f8c8d;
+    font-size: 13px;
+  }
   .btn {
     padding: 6px 14px;
     background: #3498db;
@@ -101,6 +114,12 @@
     background: #bdc3c7;
     cursor: not-allowed;
   }
+  .btn-danger {
+    background: #e74c3c;
+  }
+  .btn-danger:hover {
+    background: #c0392b;
+  }
   .loading {
     text-align: center;
     padding: 40px;
@@ -112,6 +131,7 @@
     color: #7f8c8d;
     background: white;
     border-radius: 8px;
+    margin-bottom: 24px;
   }
   
   /* モーダル */
@@ -194,10 +214,19 @@
       <span class="summary-label">未登録家族</span>
       <span class="summary-value" id="unregistered-count">-</span>
     </div>
+    <div class="summary-item">
+      <span class="summary-label">登録済み家族</span>
+      <span class="summary-value registered" id="registered-count">-</span>
+    </div>
   </div>
   
   <h2>未登録家族一覧</h2>
-  <div id="content">
+  <div id="unregistered-content">
+    <div class="loading">読み込み中...</div>
+  </div>
+  
+  <h2>登録済み家族一覧</h2>
+  <div id="registered-content">
     <div class="loading">読み込み中...</div>
   </div>
   
@@ -216,54 +245,104 @@
   </div>
 
 <script>
-  window.addEventListener('load', loadUnregisteredFamilies);
+  window.addEventListener('load', function() {
+    loadUnregisteredFamilies();
+    loadRegisteredFamilies();
+  });
   
+  // === 未登録家族 ===
   function loadUnregisteredFamilies() {
     google.script.run
-      .withSuccessHandler(renderFamilies)
+      .withSuccessHandler(renderUnregistered)
       .withFailureHandler(handleError)
       .getUnregisteredFamilies();
   }
   
-  function renderFamilies(families) {
+  function renderUnregistered(families) {
     document.getElementById('unregistered-count').textContent = families.length;
     
     if (families.length === 0) {
-      document.getElementById('content').innerHTML = 
+      document.getElementById('unregistered-content').innerHTML = 
         '<div class="empty">全家族が登録済みです 🎉</div>';
       return;
     }
     
-    let html = '<table>';
+    var html = '<table>';
     html += '<thead><tr>';
     html += '<th>家族ID</th><th>宛名</th><th>区分</th><th>生徒</th><th>操作</th>';
     html += '</tr></thead><tbody>';
     
-    families.forEach(f => {
-      const typeBadge = f.type === '自' 
+    families.forEach(function(f) {
+      var typeBadge = f.type === '自' 
         ? '<span class="type-badge type-jido">自動引落</span>'
         : '<span class="type-badge type-choku">直接持参</span>';
       
-      const studentList = f.students
-        .map(s => `${s.grade} ${s.name}`)
+      var studentList = f.students
+        .map(function(s) { return s.grade + ' ' + s.name; })
         .join(' / ');
       
       html += '<tr>';
-      html += `<td>${f.familyId}</td>`;
-      html += `<td>${f.name}</td>`;
-      html += `<td>${typeBadge}</td>`;
-      html += `<td class="student-list">${studentList}</td>`;
-      html += `<td><button class="btn" onclick="issueUrl('${f.familyId}', '${f.name}')">URL発行</button></td>`;
+      html += '<td>' + f.familyId + '</td>';
+      html += '<td>' + f.name + '</td>';
+      html += '<td>' + typeBadge + '</td>';
+      html += '<td class="student-list">' + studentList + '</td>';
+      html += '<td><button class="btn" onclick="issueUrl(\'' + f.familyId + '\', \'' + f.name + '\')">URL発行</button></td>';
       html += '</tr>';
     });
     
     html += '</tbody></table>';
-    document.getElementById('content').innerHTML = html;
+    document.getElementById('unregistered-content').innerHTML = html;
   }
   
+  // === 登録済み家族 ===
+  function loadRegisteredFamilies() {
+    google.script.run
+      .withSuccessHandler(renderRegistered)
+      .withFailureHandler(handleError)
+      .getRegisteredFamilies();
+  }
+  
+  function renderRegistered(families) {
+    document.getElementById('registered-count').textContent = families.length;
+    
+    if (families.length === 0) {
+      document.getElementById('registered-content').innerHTML = 
+        '<div class="empty">登録済み家族はまだいません</div>';
+      return;
+    }
+    
+    var html = '<table>';
+    html += '<thead><tr>';
+    html += '<th>家族ID</th><th>宛名</th><th>区分</th><th>生徒</th><th>LINE_USER_ID</th><th>登録日</th><th>操作</th>';
+    html += '</tr></thead><tbody>';
+    
+    families.forEach(function(f) {
+      var typeBadge = f.type === '自' 
+        ? '<span class="type-badge type-jido">自動引落</span>'
+        : '<span class="type-badge type-choku">直接持参</span>';
+      
+      var studentList = f.students
+        .map(function(s) { return s.grade + ' ' + s.name; })
+        .join(' / ');
+      
+      html += '<tr>';
+      html += '<td>' + f.familyId + '</td>';
+      html += '<td>' + f.name + '</td>';
+      html += '<td>' + typeBadge + '</td>';
+      html += '<td class="student-list">' + studentList + '</td>';
+      html += '<td class="line-id">' + f.lineUserIdShort + '</td>';
+      html += '<td class="registered-date">' + f.registeredAt + '</td>';
+      html += '<td><button class="btn btn-danger" onclick="confirmUnregister(\'' + f.familyId + '\', \'' + f.name + '\')">登録解除</button></td>';
+      html += '</tr>';
+    });
+    
+    html += '</tbody></table>';
+    document.getElementById('registered-content').innerHTML = html;
+  }
+  
+  // === URL発行 ===
   function issueUrl(familyId, familyName) {
-    // ボタンを一時無効化
-    document.querySelectorAll('.btn').forEach(b => b.disabled = true);
+    document.querySelectorAll('.btn').forEach(function(b) { b.disabled = true; });
     
     google.script.run
       .withSuccessHandler(showUrlModal)
@@ -278,13 +357,12 @@
     document.getElementById('url-modal').classList.add('active');
     document.getElementById('copy-feedback').classList.remove('active');
     
-    // ボタン再有効化
-    document.querySelectorAll('.btn').forEach(b => b.disabled = false);
+    document.querySelectorAll('.btn').forEach(function(b) { b.disabled = false; });
   }
   
   function handleIssueError(error) {
     alert('エラー: ' + error.message);
-    document.querySelectorAll('.btn').forEach(b => b.disabled = false);
+    document.querySelectorAll('.btn').forEach(function(b) { b.disabled = false; });
   }
   
   function closeModal() {
@@ -292,16 +370,43 @@
   }
   
   function copyUrl() {
-    const url = document.getElementById('modal-url').textContent;
-    navigator.clipboard.writeText(url).then(() => {
-      const feedback = document.getElementById('copy-feedback');
+    var url = document.getElementById('modal-url').textContent;
+    navigator.clipboard.writeText(url).then(function() {
+      var feedback = document.getElementById('copy-feedback');
       feedback.classList.add('active');
-      setTimeout(() => feedback.classList.remove('active'), 2000);
+      setTimeout(function() { feedback.classList.remove('active'); }, 2000);
     });
   }
   
+  // === 登録解除 ===
+  function confirmUnregister(familyId, familyName) {
+    var msg = familyName + ' の登録を解除します。\n\n' +
+              'この家族のLINE_USER_IDが削除され、再び未登録家族リストに表示されます。\n\n' +
+              '本当に解除しますか？';
+    if (!confirm(msg)) return;
+    
+    document.querySelectorAll('.btn').forEach(function(b) { b.disabled = true; });
+    
+    google.script.run
+      .withSuccessHandler(onUnregisterSuccess)
+      .withFailureHandler(onUnregisterError)
+      .unregisterFamily(familyId);
+  }
+  
+  function onUnregisterSuccess(result) {
+    alert(result.familyName + ' の登録を解除しました');
+    // 一覧を再読み込み
+    loadUnregisteredFamilies();
+    loadRegisteredFamilies();
+  }
+  
+  function onUnregisterError(error) {
+    alert('解除エラー: ' + error.message);
+    document.querySelectorAll('.btn').forEach(function(b) { b.disabled = false; });
+  }
+  
   function handleError(error) {
-    document.getElementById('content').innerHTML = 
+    document.getElementById('unregistered-content').innerHTML = 
       '<div class="empty">エラー: ' + error.message + '</div>';
   }
 </script>

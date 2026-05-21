@@ -700,3 +700,125 @@ function _testTriggerPermission() {
     Logger.log('エラー：' + e.toString());
   }
 }
+
+// ============================================
+// 登録済み家族の管理
+// ============================================
+
+/**
+ * 登録済み家族一覧を取得
+ * @return {Array} 登録済み家族の配列
+ */
+function getRegisteredFamilies() {
+  var ss = getSpreadsheet();
+  var familiesSheet = ss.getSheetByName('Families');
+  var studentsSheet = ss.getSheetByName('Students');
+  
+  var familiesData = familiesSheet.getDataRange().getValues();
+  var familiesHeader = familiesData[0];
+  var familiesRows = familiesData.slice(1);
+  
+  var studentsData = studentsSheet.getDataRange().getValues();
+  var studentsRows = studentsData.slice(1);
+  
+  var fIdx = {
+    familyId: familiesHeader.indexOf('家族ID'),
+    name: familiesHeader.indexOf('宛名'),
+    type: familiesHeader.indexOf('配信区分'),
+    lineUserId: familiesHeader.indexOf('保護者LINE_USER_ID'),
+    registeredAt: familiesHeader.indexOf('登録日'),
+    active: familiesHeader.indexOf('配信有効フラグ')
+  };
+  
+  // 登録済み家族を抽出（LINE_USER_ID が空でない かつ 配信有効フラグTRUE）
+  var registered = familiesRows
+    .filter(function(row) {
+      return row[fIdx.familyId] && row[fIdx.lineUserId] && row[fIdx.active] === true;
+    })
+    .map(function(row) {
+      var familyId = row[fIdx.familyId];
+      var students = studentsRows
+        .filter(function(s) { return s[1] === familyId && s[5] === true; })
+        .map(function(s) { return { grade: s[2], name: s[3], order: s[4] }; })
+        .sort(function(a, b) { return a.order - b.order; });
+      
+      var lineUserId = String(row[fIdx.lineUserId] || '');
+      var registeredAt = row[fIdx.registeredAt];
+      var registeredAtStr = '';
+      if (registeredAt instanceof Date) {
+        registeredAtStr = Utilities.formatDate(registeredAt, 'Asia/Tokyo', 'yyyy-MM-dd');
+      } else if (registeredAt) {
+        registeredAtStr = String(registeredAt);
+      }
+      
+      return {
+        familyId: familyId,
+        name: row[fIdx.name],
+        type: row[fIdx.type],
+        students: students,
+        lineUserIdShort: lineUserId.substring(0, 8) + '...',
+        registeredAt: registeredAtStr
+      };
+    });
+  
+  return registered;
+}
+
+/**
+ * 家族の登録を解除する（LINE_USER_IDを空に）
+ * @param {string} familyId - 家族ID
+ * @return {Object} 結果
+ */
+function unregisterFamily(familyId) {
+  if (!familyId) {
+    throw new Error('家族IDが指定されていません');
+  }
+  
+  var ss = getSpreadsheet();
+  var familiesSheet = ss.getSheetByName('Families');
+  var familiesData = familiesSheet.getDataRange().getValues();
+  var familiesHeader = familiesData[0];
+  
+  var fIdx = {
+    familyId: familiesHeader.indexOf('家族ID'),
+    name: familiesHeader.indexOf('宛名'),
+    lineUserId: familiesHeader.indexOf('保護者LINE_USER_ID'),
+    registeredAt: familiesHeader.indexOf('登録日')
+  };
+  
+  for (var i = 1; i < familiesData.length; i++) {
+    if (familiesData[i][fIdx.familyId] === familyId) {
+      var familyName = familiesData[i][fIdx.name];
+      
+      if (!familiesData[i][fIdx.lineUserId]) {
+        throw new Error(familyName + ' は登録されていません');
+      }
+      
+      // LINE_USER_IDを空にする
+      familiesSheet.getRange(i + 1, fIdx.lineUserId + 1).setValue('');
+      // 登録日も空にする
+      if (fIdx.registeredAt >= 0) {
+        familiesSheet.getRange(i + 1, fIdx.registeredAt + 1).setValue('');
+      }
+      
+      return {
+        success: true,
+        familyId: familyId,
+        familyName: familyName
+      };
+    }
+  }
+  
+  throw new Error('家族ID ' + familyId + ' が見つかりません');
+}
+
+/**
+ * テスト：登録済み家族取得
+ */
+function testGetRegistered() {
+  var result = getRegisteredFamilies();
+  Logger.log('登録済み家族数：' + result.length);
+  result.forEach(function(f) {
+    Logger.log('[' + f.familyId + '] ' + f.name + ' (LINE: ' + f.lineUserIdShort + ', 登録日: ' + f.registeredAt + ')');
+  });
+}
