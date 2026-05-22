@@ -237,9 +237,11 @@
       <p class="modal-subtitle" id="modal-subtitle"></p>
       <div class="modal-url-box" id="modal-url"></div>
       <div class="modal-btns">
-        <span class="copy-feedback" id="copy-feedback">コピーしました</span>
+        <span class="copy-feedback" id="copy-feedback">URLをコピーしました</span>
+        <span class="copy-feedback" id="copy-message-feedback">文面をコピーしました</span>
         <button class="btn btn-secondary" onclick="closeModal()">閉じる</button>
-        <button class="btn btn-success" onclick="copyUrl()">URLをコピー</button>
+        <button class="btn" onclick="copyUrl()">URLのみコピー</button>
+        <button class="btn btn-success" onclick="copyFullMessage()">文面ごとコピー</button>
       </div>
     </div>
   </div>
@@ -350,15 +352,42 @@
       .issueTokenForFamily(familyId);
   }
   
-  function showUrlModal(result) {
-    document.getElementById('modal-title').textContent = result.familyName + ' の登録URL';
-    document.getElementById('modal-subtitle').textContent = 'このURLを保護者にLINE等で送ってください';
-    document.getElementById('modal-url').textContent = result.url;
-    document.getElementById('url-modal').classList.add('active');
-    document.getElementById('copy-feedback').classList.remove('active');
-    
-    document.querySelectorAll('.btn').forEach(function(b) { b.disabled = false; });
+function showUrlModal(result) {
+  document.getElementById('modal-title').textContent = result.familyName + ' の登録URL';
+  document.getElementById('modal-subtitle').textContent = 'このURLを保護者にLINE等で送ってください';
+  document.getElementById('modal-url').textContent = result.url;
+  document.getElementById('url-modal').classList.add('active');
+  document.getElementById('copy-feedback').classList.remove('active');
+  document.getElementById('copy-message-feedback').classList.remove('active');
+  
+  // 完成文面を保存（コピーボタン用）
+  window._fullMessage = buildFullMessage(result.familyName, result.url);
+  
+  document.querySelectorAll('.btn').forEach(function(b) { b.disabled = false; });
+}
+
+function buildFullMessage(familyName, url) {
+  return familyName + '\n\n' +
+    '先ほどご案内した、毎月の引落金額連絡用のLINE登録のご案内です。\n' +
+    '下のURLをタップして、画面の指示に従ってご登録ください。（１分以内で終わります🙇‍♂️）\n\n' +
+    '【ご登録用URL】\n' +
+    url + '\n\n' +
+    'ご不明な点がございましたら、お気軽にお声がけください。\n' +
+    'よろしくお願いいたします。';
+}
+
+function copyFullMessage() {
+  var msg = window._fullMessage || '';
+  if (!msg) {
+    alert('文面の生成に失敗しました');
+    return;
   }
+  navigator.clipboard.writeText(msg).then(function() {
+    var feedback = document.getElementById('copy-message-feedback');
+    feedback.classList.add('active');
+    setTimeout(function() { feedback.classList.remove('active'); }, 2000);
+  });
+}
   
   function handleIssueError(error) {
     alert('エラー: ' + error.message);
