@@ -1,7 +1,7 @@
 # 引き継ぎメモ
 
 ## 最終更新
-2026-05-22 塾PC作業終了時点
+2026-05-23 塾PC作業終了時点
 
 ## 現状サマリー
 
@@ -18,56 +18,97 @@
 - ✅ **Phase 2B Step C**：登録済み家族管理（一覧・解除機能）
 - ✅ **実保護者データ投入**：41家族・49生徒
 - ✅ **マイ活で取得済LINE_USER_ID転記**：12家族分
-- ✅ **「文面ごとコピー」機能追加**：管理画面の利便性向上
-- ✅ **一斉案内文確定・予約配信設定**：明日配信予定
+- ✅ **管理画面「文面ごとコピー」機能追加**
+- ✅ **一斉案内文・予約配信**：2026-05-22朝に配信完了
+- ✅ **個別URL送付**：29家族全員に送信完了（2026-05-23）
+- ✅ **Phase 2B Step 5**：Webhook受信機能 ← 今日完成！
+- ✅ **Phase 2B Step 6**：未紐付けメッセージ管理画面 ← 今日完成！
 
-### ID収集の現状
+### ID収集の現状（2026-05-23終了時点）
 
 - 在籍：41家族・49生徒
-- 既に登録済：12家族（マイ活で取得済）
-- 未登録：29家族
-- ステータス：明日朝の一斉配信から運用開始
+- 登録済：27家族
+- 未登録：14家族
+- 進捗率：66%
 
-### Phase 2B 残り
+### 今日の最大の成果：Webhook受信機能の完成
 
-- 🔜 **Step 5**：Webhook受信（**新規入塾者対応で必須**）
-- 🔜 **Step 6**：未紐付けメッセージ画面＋紐付け確定
+**新規入塾者がID自動取得できる基盤が完成しました**。
 
-## 明日（2026-05-23以降）の運用作業
+**仕組み：**
+[公式LINEに保護者がメッセージ送信 or 友だち追加]
+↓
+[LINE Messaging API]
+↓ Webhook
+[マイ活 GAS の doPost]
+↓
+_isLineWebhookRequest() で判定
+↓
+_handleLineWebhook() を呼ぶ
+↓
+_forwardWebhookToBillingLine() で転送
+↓
+[billing-line GAS の doPost]
+↓
+_isLineWebhookRequestBL() で判定
+↓
+_handleLineWebhookBL() でメッセージ処理
+↓
+LINE プロフィール取得（_getLineProfile）
+↓
+[IncomingMessagesシートに「未紐付け」状態で記録]
+↓
+[管理画面の「未紐付けメッセージ一覧」に表示]
+↓
+[ふくちさんが家族選択→「紐付け確定」]
+↓
+[Familiesシートに自動書き込み・登録完了]
 
-### 朝の配信後の流れ
-[1] 公式LINE一斉配信が予約時刻に自動送信される
-[2] ふくちさんが未登録29家族に個別URLを送付
-- 管理画面でURL発行
-- 「文面ごとコピー」ボタンで完成文面を取得
-- 保護者LINE個別チャットに貼り付け→送信
-- 1家族あたり数十秒で完了
-[3] 保護者が順次登録（数日〜数週間）
-[4] 管理画面で登録状況を確認しながら、未登録家族に個別フォロー
+### 今日の重要な発見・設定変更
 
-### 個別URL送付の文面（確定版）
-〇〇様
-先ほどご案内した、毎月の引落金額連絡用のLINE登録のご案内です。
-下のURLをタップして、画面の指示に従ってご登録ください。（１分以内で終わります🙇‍♂️）
-【ご登録用URL】
-https://k-acdm.github.io/billing-line/register.html?t=XXXXXXXX
-ご不明な点がございましたら、お気軽にお声がけください。
-よろしくお願いいたします。
+**1. LINE Official Account Manager の「Webhook」トグル**
+- LINE Developers Console とは別に、Official Account Manager 側にも Webhook 設定がある
+- 場所：https://manager.line.biz/ → 設定 → 応答設定 → 「Webhook」
+- これがオンでないと、LINE Console側でURL設定してもWebhook通知は届かない
 
-→ 管理画面の「文面ごとコピー」ボタンで自動生成される
+**2. LINE Developers Console の Webhook URL**
+- 設定先：https://developers.line.biz/ → 春日部アカデミー → Messaging API → Messaging API設定 → Webhook設定
+- 現在の登録：マイ活のWebアプリURL（`https://script.google.com/macros/s/AKfycbyuf6o6RD_FLv4xwNlnYlaoxNmVGNATB5HyAV3rixQU6aSoiW8kP0uNEkf-7Pa2nOY6GQ/exec`）
+- マイ活のdoPost内でbilling-lineに転送している
+
+**3. 管理画面リンクは絶対URLに**
+- 開発者プレビューURL（`script.googleusercontent.com/userCodeAppPanel`）から開くと、相対URLは正しく機能しない
+- admin.htmlのリンクは完全な絶対URLで指定
+- 本番URL：`https://script.google.com/macros/s/AKfycbyWqIdWCDoj9QY0FDtX5YaiuhSKyf57NyEpmranwzOhAww73bk4VDs6RF2IukFpDw7k/exec`
+
+### 課題（未対応）
+
+**Webhookで受信したメッセージのLINEプロフィール（表示名・画像URL等）が空欄になる問題**
+- IncomingMessagesシートのC列（表示名）、D列（プロフィール画像URL）、E列（ステータスメッセージ）が空
+- 原因未調査（LINE_MESSAGING_CHANNEL_ACCESS_TOKEN は設定済み）
+- 影響：管理画面の表示が「（不明）」になるが、紐付け機能自体は動作する
+- 優先度：中（運用に支障はないが、UX向上のため後で対応）
+
+## Phase 2B 完成！
+
+すべてのStep（1〜6 + C）が完成。実運用に必要な基盤が揃った。
 
 ## 全体工程マップ
 ■ ID収集フェーズ ■
-✅ Phase 2B Step 1-4：方式A（個別URL方式）完成
-✅ Phase 2B Step C：登録済み家族管理
-✅ 実保護者データ投入＋既取得ID転記
-🔜 一斉配信（明日朝）
-🔜 個別URL送付（29家族、明日以降）
-【ここで既存49家族のID収集を進める】
-🔜 Phase 2B Step 5：Webhook受信実装 ← 新規入塾者の自動ID取得のため必須
-🔜 Phase 2B Step 6：未紐付けメッセージ管理画面
-【ここで新規入塾者の自動ID取得が可能になる】
-■ 配信フェーズ ■
+✅ Phase 2B Step 1-6 + C：全機能完成
+✅ 実保護者データ投入（41家族・49生徒）
+✅ 既取得LINE_USER_ID転記（12家族）
+✅ 一斉配信完了
+✅ 個別URL送付完了（29家族）
+🔜 残り14家族の登録待ち（自然な流れで完了予定）
+【新規入塾者対応も自動化済み】
+
+公式LINE友だち追加 or メッセージ送信
+→ 自動でIncomingMessagesに記録
+→ ふくちさんが管理画面で紐付け確定
+→ 登録完了
+
+■ 配信フェーズ ■（次の優先課題）
 🔜 Phase 3：引き落とし通知の自動配信エンジン（本丸）
 
 Phase 3-1：Excel取込機能
@@ -77,6 +118,7 @@ Phase 3-4：本配信機能
 
 ■ 運用安定化フェーズ ■
 🔜 Phase 4：滞納フォロー機能
+🔜 LINEプロフィール取得問題の調査・修正
 🔜 マイ活との統合検討（将来）
 
 ## 環境情報
@@ -89,24 +131,32 @@ Phase 3-4：本配信機能
 ### GASプロジェクト
 - 名前：billing-line
 - スクリプトID：1tJRXW2lKU3y2H3Dw1Ne8VMgdSLISGFJUdhXEraJML3HqWx_4r523epHF
-- Webアプリ URL：https://script.google.com/macros/s/AKfycbyWqIdWCDoj9QY0FDtX5YaiuhSKyf57NyEpmranwzOhAww73bk4VDs6RF2IukFpDw7k/exec
+- 本番URL：https://script.google.com/macros/s/AKfycbyWqIdWCDoj9QY0FDtX5YaiuhSKyf57NyEpmranwzOhAww73bk4VDs6RF2IukFpDw7k/exec
+- 未紐付け管理：本番URL + `?page=unlinked`
+
+### マイ活GASプロジェクト（Webhook転送元）
+- 本番URL：https://script.google.com/macros/s/AKfycbyuf6o6RD_FLv4xwNlnYlaoxNmVGNATB5HyAV3rixQU6aSoiW8kP0uNEkf-7Pa2nOY6GQ/exec
+- 改修箇所：`_handleLineWebhook` 関数に転送処理追加、`_forwardWebhookToBillingLine` 関数を新規追加
 
 ### GitHub Pages
 - 保護者登録画面：https://k-acdm.github.io/billing-line/register.html?t=【トークン】
 
 ### スプレッドシート
 - billing-line-data：1XHy8nEx7sTaHIN3EmLPpNjJRd9kSWzFnXw_eBxS7eKQ
-- 7シート構成（Families/Students/Billings/BillingItems/FollowUps/Config/Tokens）
-- 現状：41家族・49生徒・登録済12家族
+- 8シート構成（Families/Students/Billings/BillingItems/FollowUps/Config/Tokens/IncomingMessages）
+- 現状：41家族・49生徒・登録済27家族
 
-### LINE Developers Console
-- プロバイダー：春日部アカデミー
-- LINEログインチャネル：マイ活と共用
-- Messaging APIチャネル：春日部アカデミー公式（@pwg1825g）
-
-### 公式LINE
-- @pwg1825g（ライトプラン）
-- 明日朝の一斉配信予約済み
+### LINE 設定
+- LINE Developers Console
+  - Webhook URL：マイ活URLが登録済み
+  - Webhook の利用：オン
+- LINE Official Account Manager
+  - Webhook：オン（重要：これも必須）
+  - 応答方法：手動チャット
+  - あいさつメッセージ：オン
+- LINE Messaging API
+  - チャネル：春日部アカデミー公式（@pwg1825g）
+  - Webhook URL：マイ活経由でbilling-lineに転送
 
 ## 運用ルール
 
@@ -120,22 +170,27 @@ Phase 3-4：本配信機能
 3. `clasp push`（GAS変更時）
 4. GASエディタで「デプロイを管理」→既存デプロイを編集→「新バージョン」選択→デプロイ
 
+### Git操作の注意
+- `git add .` は必ず ~/billing-line ルートで実行する
+  - src/gas 配下で実行すると docs/HANDOFF.md が漏れる（過去のミスあり）
+
 ## 次回作業の選択肢
 
-### 第一候補：未登録家族への個別URL送付の作業
-- 管理画面で29家族分のURL発行＋文面コピー＋送信
-- 1家族あたり数十秒、全体で20〜40分程度
-- 一気にやるか、グループ分けして数日に分けるかは判断
+### 第一候補：Phase 3（配信エンジン）着手 - プロジェクトの本丸
+- Phase 3-1：Excel取込機能（30〜60分）
+- Phase 3-2：配信プレビュー機能（45〜60分）
+- Phase 3-3：テスト配信機能（30分）
+- Phase 3-4：本配信機能（45〜60分）
+- 合計：3〜4時間
 
-### 第二候補：Phase 2B Step 5-6（Webhook受信）の実装
-- 新規入塾者対応として必須
-- 既存49家族のID収集と並行して実装可能
-- 所要：合計2〜3時間
+### 第二候補：LINEプロフィール取得問題の調査
+- 表示名・画像URL等が空になる原因調査
+- アクセストークンの値確認（マイ活と同一か、Bot Channel Token か）
+- 所要：30〜45分
 
-### 第三候補：Phase 3（配信エンジン）の設計・実装着手
-- プロジェクトの本丸
-- ID収集の進捗と並行して進められる
-- 所要：合計4〜6時間
+### 第三候補：未登録14家族へのフォロー
+- 反応がない家族に対して、個別の声かけや再送
+- ふくちさんマターの作業
 
 ### 再開時の標準手順
 cd ~/billing-line
@@ -146,7 +201,7 @@ git pull origin dev
 
 - 設計書：`docs/SYSTEM_DESIGN.md`、`docs/PHASE_2B_DESIGN.md`
 - 引き継ぎメモ（このファイル）：`docs/HANDOFF.md`
-- マイ活の参照箇所：`mykt-eitango/gas/Code.js` の L19000〜L19560
+- マイ活の参照箇所：`mykt-eitango/gas/Code.js` のL19000〜L19560（OAuth）、L20576〜L20700（Webhook）
 - 過去Excel：`引落額通知_DATA_22-04_.xlsx`
 - 既取得LINE_USER_ID：`取得済LINE_ID-26-05-22.xlsx`
 
@@ -162,9 +217,9 @@ git pull origin dev
 ✅ Phase 2B Step C：登録済み家族一覧・解除機能
 ✅ 実保護者データ投入＋既取得LINE_USER_ID転記
 ✅ 管理画面「文面ごとコピー」機能追加
-✅ 一斉案内文確定・予約配信設定 ← 明日朝配信予定
-🔜 個別URL送付フェーズ（明日〜）
-🔜 Phase 2B Step 5：Webhook受信（新規入塾者対応・必須）
-🔜 Phase 2B Step 6：未紐付けメッセージ画面
+✅ 一斉配信・個別URL送付完了
+✅ Phase 2B Step 5：Webhook受信機能 ← 今日完成！
+✅ Phase 2B Step 6：未紐付けメッセージ管理画面 ← 今日完成！
 🔜 Phase 3：管理画面・配信エンジン（本丸）
 🔜 Phase 4：滞納フォロー機能
+🔜 LINEプロフィール取得問題の調査

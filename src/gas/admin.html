@@ -204,24 +204,134 @@
   .copy-feedback.active {
     display: inline;
   }
+  /* 未紐付けメッセージカード */
+  .message-card {
+    background: white;
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  .message-avatar {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: #ecf0f1;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+  .message-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .message-avatar-fallback {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #95a5a6;
+    font-size: 20px;
+  }
+  .message-content {
+    flex: 1;
+    min-width: 0;
+  }
+  .message-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+    gap: 12px;
+  }
+  .message-display-name {
+    font-weight: 600;
+    color: #2c3e50;
+    font-size: 15px;
+  }
+  .message-received-at {
+    color: #95a5a6;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .message-body {
+    background: #f8f9fa;
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin: 8px 0;
+    font-size: 14px;
+    color: #34495e;
+    line-height: 1.5;
+    word-break: break-word;
+  }
+  .message-body.is-sticker {
+    color: #95a5a6;
+    font-style: italic;
+  }
+  .message-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-top: 8px;
+    flex-wrap: wrap;
+  }
+  .family-select {
+    flex: 1;
+    min-width: 180px;
+    padding: 8px 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+    background: white;
+  }
+  .btn-link {
+    background: #27ae60;
+  }
+  .btn-link:hover {
+    background: #229954;
+  }
+  .btn-ignore {
+    background: #95a5a6;
+  }
+  .btn-ignore:hover {
+    background: #7f8c8d;
+  }
+  .line-id-mini {
+    font-family: ui-monospace, "SF Mono", monospace;
+    color: #95a5a6;
+    font-size: 11px;
+  }
 </style>
 </head>
 <body>
   <h1>billing-line 管理画面</h1>
   
-  <div class="summary">
-    <div class="summary-item">
-      <span class="summary-label">未登録家族</span>
-      <span class="summary-value" id="unregistered-count">-</span>
-    </div>
-    <div class="summary-item">
-      <span class="summary-label">登録済み家族</span>
-      <span class="summary-value registered" id="registered-count">-</span>
-    </div>
+<div class="summary">
+  <div class="summary-item">
+    <span class="summary-label">未登録家族</span>
+    <span class="summary-value" id="unregistered-count">-</span>
   </div>
+  <div class="summary-item">
+    <span class="summary-label">登録済み家族</span>
+    <span class="summary-value registered" id="registered-count">-</span>
+  </div>
+  <div class="summary-item">
+    <span class="summary-label">未紐付けメッセージ</span>
+    <span class="summary-value" id="unlinked-count" style="color: #e67e22;">-</span>
+  </div>
+</div>
   
   <h2>未登録家族一覧</h2>
   <div id="unregistered-content">
+    <div class="loading">読み込み中...</div>
+  </div>
+
+  <h2>未紐付けメッセージ一覧 <a href="https://script.google.com/macros/s/AKfycbyWqIdWCDoj9QY0FDtX5YaiuhSKyf57NyEpmranwzOhAww73bk4VDs6RF2IukFpDw7k/exec?page=unlinked" target="_blank" style="font-size: 14px; font-weight: normal; margin-left: 12px; color: #3498db;">📬 別画面で開く →</a></h2>
+  <div id="unlinked-content">
     <div class="loading">読み込み中...</div>
   </div>
   
@@ -249,6 +359,7 @@
 <script>
   window.addEventListener('load', function() {
     loadUnregisteredFamilies();
+    loadUnlinkedMessages();
     loadRegisteredFamilies();
   });
   
@@ -438,6 +549,148 @@ function copyFullMessage() {
     document.getElementById('unregistered-content').innerHTML = 
       '<div class="empty">エラー: ' + error.message + '</div>';
   }
+
+// === 未紐付けメッセージ ===
+  var _unregisteredFamilyOptions = '';
+  
+  function loadUnlinkedMessages() {
+    google.script.run
+      .withSuccessHandler(renderUnlinkedMessages)
+      .withFailureHandler(handleError)
+      .getUnlinkedMessages();
+  }
+  
+  function renderUnlinkedMessages(messages) {
+    document.getElementById('unlinked-count').textContent = messages.length;
+    
+    if (messages.length === 0) {
+      document.getElementById('unlinked-content').innerHTML = 
+        '<div class="empty">未紐付けのメッセージはありません</div>';
+      return;
+    }
+    
+    // 未登録家族のリストをプルダウン用に取得
+    google.script.run
+      .withSuccessHandler(function(families) {
+        _unregisteredFamilyOptions = '<option value="">家族を選択...</option>' +
+          families.map(function(f) {
+            var studentsBrief = f.students.map(function(s) { return s.name; }).join(' / ');
+            return '<option value="' + f.familyId + '">' + 
+              f.name + '（' + studentsBrief + '）</option>';
+          }).join('');
+        
+        renderUnlinkedMessagesContent(messages);
+      })
+      .withFailureHandler(handleError)
+      .getUnregisteredFamilies();
+  }
+  
+  function renderUnlinkedMessagesContent(messages) {
+    var html = '';
+    
+    messages.forEach(function(msg) {
+      var avatarHtml = msg.pictureUrl
+        ? '<img src="' + msg.pictureUrl + '" alt="">'
+        : '<div class="message-avatar-fallback">👤</div>';
+      
+      var bodyText = msg.messageBody || '';
+      var bodyClass = '';
+      if (msg.messageType === 'sticker') {
+        bodyText = '（スタンプ）';
+        bodyClass = 'is-sticker';
+      } else if (msg.messageType === 'image') {
+        bodyText = '（画像）';
+        bodyClass = 'is-sticker';
+      } else if (msg.messageType === 'follow') {
+        bodyText = '友だち追加されました';
+        bodyClass = 'is-sticker';
+      }
+      
+      html += '<div class="message-card">';
+      html += '<div class="message-avatar">' + avatarHtml + '</div>';
+      html += '<div class="message-content">';
+      html += '<div class="message-header">';
+      html += '<div>';
+      html += '<div class="message-display-name">' + escapeHtml(msg.displayName) + '</div>';
+      html += '<div class="line-id-mini">LINE ID: ' + msg.lineUserIdShort + '</div>';
+      html += '</div>';
+      html += '<div class="message-received-at">' + msg.receivedAt + '</div>';
+      html += '</div>';
+      html += '<div class="message-body ' + bodyClass + '">' + escapeHtml(bodyText) + '</div>';
+      html += '<div class="message-actions">';
+      html += '<select class="family-select" id="select-' + msg.rowIdx + '">';
+      html += _unregisteredFamilyOptions;
+      html += '</select>';
+      html += '<button class="btn btn-link" onclick="confirmLink(' + msg.rowIdx + ')">紐付け確定</button>';
+      html += '<button class="btn btn-ignore" onclick="confirmIgnore(' + msg.rowIdx + ')">無視</button>';
+      html += '</div>';
+      html += '</div>';
+      html += '</div>';
+    });
+    
+    document.getElementById('unlinked-content').innerHTML = html;
+  }
+  
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+  
+  function confirmLink(rowIdx) {
+    var select = document.getElementById('select-' + rowIdx);
+    var familyId = select.value;
+    
+    if (!familyId) {
+      alert('家族を選択してください');
+      return;
+    }
+    
+    var familyName = select.options[select.selectedIndex].text;
+    if (!confirm(familyName + ' と紐付けます。よろしいですか？')) return;
+    
+    document.querySelectorAll('.btn').forEach(function(b) { b.disabled = true; });
+    
+    google.script.run
+      .withSuccessHandler(onLinkSuccess)
+      .withFailureHandler(onLinkError)
+      .linkMessageToFamily(rowIdx, familyId);
+  }
+  
+  function onLinkSuccess(result) {
+    alert(result.familyName + ' と ' + (result.displayName || 'LINE') + ' を紐付けました');
+    reloadAll();
+  }
+  
+  function onLinkError(error) {
+    alert('紐付けエラー: ' + error.message);
+    document.querySelectorAll('.btn').forEach(function(b) { b.disabled = false; });
+  }
+  
+  function confirmIgnore(rowIdx) {
+    if (!confirm('このメッセージを無視（スキップ）します。よろしいですか？')) return;
+    
+    document.querySelectorAll('.btn').forEach(function(b) { b.disabled = true; });
+    
+    google.script.run
+      .withSuccessHandler(onIgnoreSuccess)
+      .withFailureHandler(onLinkError)
+      .ignoreMessage(rowIdx);
+  }
+  
+  function onIgnoreSuccess(result) {
+    alert('メッセージを無視しました');
+    reloadAll();
+  }
+  
+  function reloadAll() {
+    loadUnregisteredFamilies();
+    loadUnlinkedMessages();
+    loadRegisteredFamilies();
+  }
+
 </script>
 </body>
 </html>

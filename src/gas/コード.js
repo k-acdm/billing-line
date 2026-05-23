@@ -24,11 +24,19 @@ function getSpreadsheet() {
 // ============================================
 function doGet(e) {
   var action = (e && e.parameter && e.parameter.action) || '';
+  var page = (e && e.parameter && e.parameter.page) || '';
   
   // LINE Login関連のアクション
   if (action === 'lineLoginStart')    return _handleLineLoginStart(e.parameter);
   if (action === 'lineLoginCallback') return _handleLineLoginCallback(e.parameter);
   if (action === 'lineLoginRegister') return _handleLineLoginRegister(e.parameter);
+  
+  // 未紐付けメッセージ管理画面
+  if (page === 'unlinked') {
+    return HtmlService.createHtmlOutputFromFile('unlinked')
+      .setTitle('未紐付けメッセージ管理 - billing-line')
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+  }
   
   // それ以外は管理画面
   return HtmlService.createHtmlOutputFromFile('admin')
@@ -821,4 +829,458 @@ function testGetRegistered() {
   result.forEach(function(f) {
     Logger.log('[' + f.familyId + '] ' + f.name + ' (LINE: ' + f.lineUserIdShort + ', 登録日: ' + f.registeredAt + ')');
   });
+}
+
+// ============================================
+// Webhook受信（方式B：公式LINEメッセージ受信）
+// ============================================
+
+/**
+ * doPostエンドポイント：マイ活GASからの転送 or 直接Webhook受信を処理
+ */
+function doPost(e) {
+  try {
+    if (_isLineWebhookRequestBL(e)) {
+      return _handleLineWebhookBL(e);
+    }
+  } catch (err) {
+    console.error('[doPost]', err);
+  }
+  return ContentService.createTextOutput(JSON.stringify({ ok: true })).setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * LINE Webhookリクエスト判定（billing-line用）
+ */
+function _isLineWebhookRequestBL(e) {
+  try {
+    if (!e || !e.postData || !e.postData.contents) return false;
+    var ct = String(e.postData.type || '').toLowerCase();
+    if (ct.indexOf('json') < 0) return false;
+    var body = String(e.postData.contents || '');
+    if (body.indexOf('"events"') < 0) return false;
+    return true;
+  } catch (_) { return false; }
+}
+
+/**
+ * Webhook処理本体
+ * follow（友だち追加）/ message（メッセージ受信）イベントを処理
+ */
+function _handleLineWebhookBL(e) {
+  try {
+    console.log('[BL受信] payload全体: ' + (e.postData ? e.postData.contents : 'なし').substring(0, 500));
+
+    var parsed = JSON.parse(e.postData.contents);
+    var events = (parsed && Array.isArray(parsed.events)) ? parsed.events : [];
+    
+    console.log('[billing-line webhook] events=' + events.length);
+    
+    events.forEach(function(event) {
+      try {
+        if (event.type === 'follow') {
+          _recordFollowEvent(event);
+        } else if (event.type === 'message') {
+          _recordMessageEvent(event);
+        }
+        // unfollow等は無視
+      } catch (innerErr) {
+        console.error('[event処理エラー]', innerErr, JSON.stringify(event));
+      }
+    });
+  } catch (err) {
+    console.error('[_handleLineWebhookBL]', err);
+  }
+  return ContentService.createTextOutput(JSON.stringify({ ok: true })).setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * 友だち追加イベントを記録
+ */
+function _recordFollowEvent(event) {
+  var userId = event.source && event.source.userId;
+  if (!userId) return;
+  
+  // 既に登録済みなら記録不要
+  if (_isAlreadyRegisteredLineUserId(userId)) {
+    console.log('[follow] 既に登録済のユーザー：' + userId.substring(0, 8) + '...');
+    return;
+  }
+  
+  // 既にIncomingMessagesに「未紐付け」で居るなら、重複記録を避ける
+  if (_hasUnlinkedRecord(userId)) {
+    console.log('[follow] 既に未紐付け記録あり：' + userId.substring(0, 8) + '...');
+    return;
+  }
+  
+  var profile = _getLineProfile(userId);
+  _appendIncomingMessage({
+    userId: userId,
+    displayName: profile.displayName || '',
+    pictureUrl: profile.pictureUrl || '',
+    statusMessage: profile.statusMessage || '',
+    messageType: 'follow',
+    messageBody: '友だち追加'
+  });
+}
+
+/**
+ * メッセージ受信イベントを記録
+ */
+function _recordMessageEvent(event) {
+  var userId = event.source && event.source.userId;
+  if (!userId) return;
+  
+  // 既に登録済みなら記録不要
+  if (_isAlreadyRegisteredLineUserId(userId)) {
+    console.log('[message] 既に登録済のユーザー：' + userId.substring(0, 8) + '...');
+    return;
+  }
+  
+  // メッセージ種別と本文を判定
+  var message = event.message || {};
+  var msgType = message.type || 'unknown';
+  var msgBody = '';
+  if (msgType === 'text') {
+    msgBody = String(message.text || '');
+  } else {
+    msgBody = msgType; // sticker / image / video 等はそのまま種別を本文として記録
+  }
+  
+  var profile = _getLineProfile(userId);
+  _appendIncomingMessage({
+    userId: userId,
+    displayName: profile.displayName || '',
+    pictureUrl: profile.pictureUrl || '',
+    statusMessage: profile.statusMessage || '',
+    messageType: msgType,
+    messageBody: msgBody
+  });
+}
+
+/**
+ * LINEプロフィール取得
+ */
+function _getLineProfile(userId) {
+  var token = _getLineMessagingAccessToken();
+  if (!token) {
+    console.error('[_getLineProfile] LINE_MESSAGING_CHANNEL_ACCESS_TOKEN 未設定');
+    return {};
+  }
+  try {
+    var url = 'https://api.line.me/v2/bot/profile/' + encodeURIComponent(userId);
+    var res = UrlFetchApp.fetch(url, {
+      method: 'get',
+      headers: { Authorization: 'Bearer ' + token },
+      muteHttpExceptions: true
+    });
+    if (res.getResponseCode() !== 200) {
+      console.error('[_getLineProfile] status=' + res.getResponseCode());
+      return {};
+    }
+    return JSON.parse(res.getContentText()) || {};
+  } catch (err) {
+    console.error('[_getLineProfile]', err);
+    return {};
+  }
+}
+
+/**
+ * 既にFamiliesシートに登録済みのLINE_USER_IDかチェック
+ */
+function _isAlreadyRegisteredLineUserId(userId) {
+  try {
+    var ss = getSpreadsheet();
+    var sheet = ss.getSheetByName('Families');
+    var data = sheet.getDataRange().getValues();
+    var header = data[0];
+    var idx = header.indexOf('保護者LINE_USER_ID');
+    if (idx < 0) return false;
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][idx]).trim() === userId) return true;
+    }
+    return false;
+  } catch (err) {
+    console.error('[_isAlreadyRegisteredLineUserId]', err);
+    return false;
+  }
+}
+
+/**
+ * IncomingMessagesシートに「未紐付け」状態の同一USER_IDが存在するかチェック
+ */
+function _hasUnlinkedRecord(userId) {
+  try {
+    var ss = getSpreadsheet();
+    var sheet = ss.getSheetByName('IncomingMessages');
+    var data = sheet.getDataRange().getValues();
+    if (data.length < 2) return false;
+    var header = data[0];
+    var uidIdx = header.indexOf('LINE_USER_ID');
+    var statusIdx = header.indexOf('紐付けステータス');
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][uidIdx]).trim() === userId && data[i][statusIdx] === '未紐付け') {
+        return true;
+      }
+    }
+    return false;
+  } catch (err) {
+    console.error('[_hasUnlinkedRecord]', err);
+    return false;
+  }
+}
+
+/**
+ * IncomingMessagesシートに新規行を追記
+ */
+function _appendIncomingMessage(rec) {
+  var ss = getSpreadsheet();
+  var sheet = ss.getSheetByName('IncomingMessages');
+  if (!sheet) throw new Error('IncomingMessagesシートが見つかりません');
+  
+  sheet.appendRow([
+    new Date(),                                        // 受信日時
+    rec.userId,                                        // LINE_USER_ID
+    rec.displayName || '',                             // 表示名
+    rec.pictureUrl || '',                              // プロフィール画像URL
+    rec.statusMessage || '',                           // ステータスメッセージ
+    rec.messageType || '',                             // メッセージ種別
+    rec.messageBody || '',                             // メッセージ本文
+    '未紐付け',                                          // 紐付けステータス
+    '',                                                // 紐付け家族ID
+    ''                                                 // 紐付け日時
+  ]);
+  
+  // LINE_USER_IDを文字列として確実に保持
+  var lastRow = sheet.getLastRow();
+  sheet.getRange(lastRow, 2).setNumberFormat('@');
+}
+
+/**
+ * テスト：模擬Webhookイベントを生成して動作確認
+ */
+function _testWebhookFollow() {
+  var mockEvent = {
+    postData: {
+      type: 'application/json',
+      contents: JSON.stringify({
+        events: [{
+          type: 'follow',
+          source: { userId: 'Utest_dummy_user_id_for_test' }
+        }]
+      })
+    }
+  };
+  var result = doPost(mockEvent);
+  Logger.log('テスト結果: ' + result.getContent());
+  Logger.log('IncomingMessagesシートを確認してください');
+}
+
+// ============================================
+// 未紐付けメッセージの管理（Phase 2B Step 6）
+// ============================================
+
+/**
+ * 未紐付けメッセージ一覧を取得
+ */
+function getUnlinkedMessages() {
+  var ss = getSpreadsheet();
+  var sheet = ss.getSheetByName('IncomingMessages');
+  if (!sheet) return [];
+  
+  var data = sheet.getDataRange().getValues();
+  if (data.length < 2) return [];
+  
+  var header = data[0];
+  var idx = {
+    receivedAt: header.indexOf('受信日時'),
+    lineUserId: header.indexOf('LINE_USER_ID'),
+    displayName: header.indexOf('表示名'),
+    pictureUrl: header.indexOf('プロフィール画像URL'),
+    statusMessage: header.indexOf('ステータスメッセージ'),
+    messageType: header.indexOf('メッセージ種別'),
+    messageBody: header.indexOf('メッセージ本文'),
+    status: header.indexOf('紐付けステータス')
+  };
+  
+  var result = [];
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][idx.status] !== '未紐付け') continue;
+    
+    var receivedAt = data[i][idx.receivedAt];
+    var dateStr = '';
+    if (receivedAt instanceof Date) {
+      dateStr = Utilities.formatDate(receivedAt, 'Asia/Tokyo', 'MM/dd HH:mm');
+    } else if (receivedAt) {
+      dateStr = String(receivedAt);
+    }
+    
+    result.push({
+      rowIdx: i + 1,  // 1-based row number for spreadsheet update
+      receivedAt: dateStr,
+      lineUserId: data[i][idx.lineUserId],
+      lineUserIdShort: String(data[i][idx.lineUserId] || '').substring(0, 8) + '...',
+      displayName: data[i][idx.displayName] || '（不明）',
+      pictureUrl: data[i][idx.pictureUrl] || '',
+      statusMessage: data[i][idx.statusMessage] || '',
+      messageType: data[i][idx.messageType],
+      messageBody: data[i][idx.messageBody]
+    });
+  }
+  
+  return result;
+}
+
+/**
+ * メッセージを家族と紐付け
+ * - Familiesシートに LINE_USER_ID を書き込み
+ * - IncomingMessagesシートのステータスを「紐付け済」に
+ */
+function linkMessageToFamily(rowIdx, familyId) {
+  if (!rowIdx || !familyId) {
+    throw new Error('rowIdx と familyId が必要です');
+  }
+  
+  var ss = getSpreadsheet();
+  var incoming = ss.getSheetByName('IncomingMessages');
+  var families = ss.getSheetByName('Families');
+  
+  // 1. IncomingMessagesシートから該当行のLINE_USER_IDを取得
+  var msgRow = incoming.getRange(rowIdx, 1, 1, 10).getValues()[0];
+  var header = incoming.getRange(1, 1, 1, 10).getValues()[0];
+  var hIdx = {
+    lineUserId: header.indexOf('LINE_USER_ID'),
+    displayName: header.indexOf('表示名'),
+    status: header.indexOf('紐付けステータス'),
+    linkedFamily: header.indexOf('紐付け家族ID'),
+    linkedAt: header.indexOf('紐付け日時')
+  };
+  
+  var userId = String(msgRow[hIdx.lineUserId] || '').trim();
+  var displayName = String(msgRow[hIdx.displayName] || '').trim();
+  
+  if (!userId) {
+    throw new Error('LINE_USER_IDが取得できませんでした');
+  }
+  
+  // 2. Familiesシートを更新
+  var familiesData = families.getDataRange().getValues();
+  var fHeader = familiesData[0];
+  var fIdx = {
+    familyId: fHeader.indexOf('家族ID'),
+    name: fHeader.indexOf('宛名'),
+    lineUserId: fHeader.indexOf('保護者LINE_USER_ID'),
+    registeredAt: fHeader.indexOf('登録日')
+  };
+  
+  var familyRowIdx = -1;
+  var familyName = '';
+  for (var i = 1; i < familiesData.length; i++) {
+    if (familiesData[i][fIdx.familyId] === familyId) {
+      familyRowIdx = i;
+      familyName = familiesData[i][fIdx.name];
+      
+      // 二重登録チェック
+      if (familiesData[i][fIdx.lineUserId]) {
+        throw new Error(familyName + ' は既に登録されています');
+      }
+      break;
+    }
+  }
+  
+  if (familyRowIdx < 0) {
+    throw new Error('家族ID ' + familyId + ' が見つかりません');
+  }
+  
+  // Familiesシートに LINE_USER_ID と 登録日 を書き込み
+  var cell = families.getRange(familyRowIdx + 1, fIdx.lineUserId + 1);
+  cell.setNumberFormat('@');
+  cell.setValue(userId);
+  if (fIdx.registeredAt >= 0) {
+    families.getRange(familyRowIdx + 1, fIdx.registeredAt + 1).setValue(new Date());
+  }
+  
+  // 3. IncomingMessagesシートを更新
+  incoming.getRange(rowIdx, hIdx.status + 1).setValue('紐付け済');
+  incoming.getRange(rowIdx, hIdx.linkedFamily + 1).setValue(familyId);
+  incoming.getRange(rowIdx, hIdx.linkedAt + 1).setValue(new Date());
+  
+  return {
+    success: true,
+    familyName: familyName,
+    displayName: displayName
+  };
+}
+
+/**
+ * LINE_USER_IDで家族と紐付け（最初に見つかった該当メッセージで紐付け実行）
+ */
+function linkMessageToFamilyByLineUserId(lineUserId, familyId) {
+  if (!lineUserId || !familyId) {
+    throw new Error('lineUserId と familyId が必要です');
+  }
+  
+  var ss = getSpreadsheet();
+  var incoming = ss.getSheetByName('IncomingMessages');
+  var data = incoming.getDataRange().getValues();
+  var header = data[0];
+  var uidIdx = header.indexOf('LINE_USER_ID');
+  var statusIdx = header.indexOf('紐付けステータス');
+  
+  // 該当USER_IDの未紐付けメッセージで、最初に見つかった行を使う
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][uidIdx]).trim() === String(lineUserId).trim() &&
+        data[i][statusIdx] === '未紐付け') {
+      return linkMessageToFamily(i + 1, familyId);
+    }
+  }
+  
+  throw new Error('該当する未紐付けメッセージが見つかりません');
+}
+
+/**
+ * メッセージを無視（ステータスのみ更新）
+ */
+function ignoreMessage(rowIdx) {
+  if (!rowIdx) throw new Error('rowIdxが必要です');
+  
+  var ss = getSpreadsheet();
+  var incoming = ss.getSheetByName('IncomingMessages');
+  var header = incoming.getRange(1, 1, 1, 10).getValues()[0];
+  var statusIdx = header.indexOf('紐付けステータス');
+  var linkedAtIdx = header.indexOf('紐付け日時');
+  
+  incoming.getRange(rowIdx, statusIdx + 1).setValue('無視');
+  incoming.getRange(rowIdx, linkedAtIdx + 1).setValue(new Date());
+  
+  return { success: true };
+}
+
+/**
+ * 同じLINE_USER_IDの未紐付けメッセージを一括無視
+ */
+function ignoreMessagesByUserId(lineUserId) {
+  if (!lineUserId) throw new Error('LINE_USER_IDが必要です');
+  
+  var ss = getSpreadsheet();
+  var incoming = ss.getSheetByName('IncomingMessages');
+  var data = incoming.getDataRange().getValues();
+  var header = data[0];
+  var uidIdx = header.indexOf('LINE_USER_ID');
+  var statusIdx = header.indexOf('紐付けステータス');
+  var linkedAtIdx = header.indexOf('紐付け日時');
+  
+  var count = 0;
+  var now = new Date();
+  
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][uidIdx]).trim() === String(lineUserId).trim() &&
+        data[i][statusIdx] === '未紐付け') {
+      incoming.getRange(i + 1, statusIdx + 1).setValue('無視');
+      incoming.getRange(i + 1, linkedAtIdx + 1).setValue(now);
+      count++;
+    }
+  }
+  
+  return { success: true, count: count };
 }

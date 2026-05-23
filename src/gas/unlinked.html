@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<meta charset="UTF-8">
+<title>未紐付けメッセージ管理 - billing-line</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Yu Gothic", sans-serif;
+    margin: 0;
+    padding: 20px;
+    background: #f5f5f5;
+    color: #333;
+  }
+  .page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  h1 {
+    font-size: 22px;
+    margin: 0;
+    color: #2c3e50;
+  }
+  .back-link {
+    color: #3498db;
+    text-decoration: none;
+    font-size: 14px;
+  }
+  .back-link:hover {
+    text-decoration: underline;
+  }
+  .summary {
+    background: white;
+    padding: 16px 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+  .summary-item {
+    display: inline-block;
+    margin-right: 24px;
+  }
+  .summary-label {
+    font-size: 13px;
+    color: #7f8c8d;
+    margin-right: 8px;
+  }
+  .summary-value {
+    font-size: 24px;
+    font-weight: 600;
+    color: #e67e22;
+  }
+  .user-group {
+    background: white;
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+  .user-group-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding-bottom: 12px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid #eee;
+  }
+  .user-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: #ecf0f1;
+    flex-shrink: 0;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #95a5a6;
+    font-size: 20px;
+  }
+  .user-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .user-info {
+    flex: 1;
+    min-width: 0;
+  }
+  .user-name {
+    font-size: 16px;
+    font-weight: 600;
+    color: #2c3e50;
+    margin-bottom: 2px;
+  }
+  .user-line-id {
+    font-family: ui-monospace, "SF Mono", monospace;
+    color: #95a5a6;
+    font-size: 11px;
+  }
+  .user-msg-count {
+    font-size: 13px;
+    color: #e67e22;
+    margin-top: 2px;
+  }
+  .user-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .family-select {
+    min-width: 220px;
+    padding: 8px 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+    background: white;
+  }
+  .btn {
+    padding: 8px 14px;
+    border: none;
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+    color: white;
+  }
+  .btn:disabled {
+    background: #bdc3c7 !important;
+    cursor: not-allowed;
+  }
+  .btn-link {
+    background: #27ae60;
+  }
+  .btn-link:hover {
+    background: #229954;
+  }
+  .btn-ignore-all {
+    background: #e74c3c;
+  }
+  .btn-ignore-all:hover {
+    background: #c0392b;
+  }
+  .btn-ignore {
+    background: #95a5a6;
+  }
+  .btn-ignore:hover {
+    background: #7f8c8d;
+  }
+  .messages-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .message-item {
+    background: #f8f9fa;
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 14px;
+    color: #34495e;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+  }
+  .message-item.is-special {
+    color: #95a5a6;
+    font-style: italic;
+  }
+  .message-body {
+    flex: 1;
+    word-break: break-word;
+  }
+  .message-time {
+    color: #95a5a6;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .message-ignore-btn {
+    background: transparent;
+    color: #95a5a6;
+    border: 1px solid #bdc3c7;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .message-ignore-btn:hover {
+    background: #f5f5f5;
+  }
+  .empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: #7f8c8d;
+    background: white;
+    border-radius: 10px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+  .loading {
+    text-align: center;
+    padding: 60px 20px;
+    color: #7f8c8d;
+  }
+</style>
+</head>
+<body>
+  <div class="page-header">
+    <h1>📬 未紐付けメッセージ管理</h1>
+    <a href="?" class="back-link">← 管理画面に戻る</a>
+  </div>
+  
+  <div class="summary">
+    <div class="summary-item">
+      <span class="summary-label">未紐付け（人数）</span>
+      <span class="summary-value" id="user-count">-</span>
+    </div>
+    <div class="summary-item">
+      <span class="summary-label">未紐付け（メッセージ数）</span>
+      <span class="summary-value" id="message-count">-</span>
+    </div>
+  </div>
+  
+  <div id="content">
+    <div class="loading">読み込み中...</div>
+  </div>
+
+<script>
+  var _unregisteredFamilyOptions = '';
+  
+  window.addEventListener('load', function() {
+    google.script.run
+      .withSuccessHandler(function(families) {
+        _unregisteredFamilyOptions = '<option value="">家族を選択...</option>' +
+          families.map(function(f) {
+            var studentsBrief = f.students.map(function(s) { return s.name; }).join(' / ');
+            return '<option value="' + f.familyId + '">' + 
+              f.name + '（' + studentsBrief + '）</option>';
+          }).join('');
+        loadMessages();
+      })
+      .withFailureHandler(function(err) {
+        document.getElementById('content').innerHTML = 
+          '<div class="empty">家族リストの取得に失敗: ' + err.message + '</div>';
+      })
+      .getUnregisteredFamilies();
+  });
+  
+  function loadMessages() {
+    google.script.run
+      .withSuccessHandler(renderGrouped)
+      .withFailureHandler(function(err) {
+        document.getElementById('content').innerHTML = 
+          '<div class="empty">エラー: ' + err.message + '</div>';
+      })
+      .getUnlinkedMessages();
+  }
+  
+  function renderGrouped(messages) {
+    var groups = {};
+    messages.forEach(function(msg) {
+      var uid = msg.lineUserId;
+      if (!groups[uid]) {
+        groups[uid] = {
+          lineUserId: uid,
+          lineUserIdShort: msg.lineUserIdShort,
+          displayName: msg.displayName,
+          pictureUrl: msg.pictureUrl,
+          messages: []
+        };
+      }
+      groups[uid].messages.push(msg);
+    });
+    
+    var userIds = Object.keys(groups);
+    
+    document.getElementById('user-count').textContent = userIds.length;
+    document.getElementById('message-count').textContent = messages.length;
+    
+    if (userIds.length === 0) {
+      document.getElementById('content').innerHTML = 
+        '<div class="empty">未紐付けのメッセージはありません 🎉</div>';
+      return;
+    }
+    
+    var html = '';
+    userIds.forEach(function(uid) {
+      var group = groups[uid];
+      var msgCount = group.messages.length;
+      
+      var avatarHtml = group.pictureUrl
+        ? '<img src="' + escapeHtml(group.pictureUrl) + '" alt="">'
+        : '👤';
+      
+      html += '<div class="user-group" data-uid="' + escapeHtml(uid) + '">';
+      
+      html += '<div class="user-group-header">';
+      html += '<div class="user-avatar">' + avatarHtml + '</div>';
+      html += '<div class="user-info">';
+      html += '<div class="user-name">' + escapeHtml(group.displayName || '（不明）') + '</div>';
+      html += '<div class="user-line-id">LINE ID: ' + escapeHtml(group.lineUserIdShort) + '</div>';
+      html += '<div class="user-msg-count">' + msgCount + '件のメッセージ</div>';
+      html += '</div>';
+      html += '<div class="user-actions">';
+      html += '<select class="family-select" id="select-' + escapeAttr(uid) + '">';
+      html += _unregisteredFamilyOptions;
+      html += '</select>';
+      html += '<button class="btn btn-link" onclick="confirmLinkAll(\'' + escapeAttr(uid) + '\')">この家族に紐付け</button>';
+      html += '<button class="btn btn-ignore-all" onclick="confirmIgnoreAll(\'' + escapeAttr(uid) + '\')">全て無視</button>';
+      html += '</div>';
+      html += '</div>';
+      
+      html += '<div class="messages-list">';
+      group.messages.forEach(function(msg) {
+        var bodyText = msg.messageBody || '';
+        var isSpecial = false;
+        if (msg.messageType === 'sticker') { bodyText = '（スタンプ）'; isSpecial = true; }
+        else if (msg.messageType === 'image') { bodyText = '（画像）'; isSpecial = true; }
+        else if (msg.messageType === 'follow') { bodyText = '友だち追加されました'; isSpecial = true; }
+        
+        html += '<div class="message-item' + (isSpecial ? ' is-special' : '') + '">';
+        html += '<span class="message-body">' + escapeHtml(bodyText) + '</span>';
+        html += '<span class="message-time">' + escapeHtml(msg.receivedAt) + '</span>';
+        html += '<button class="message-ignore-btn" onclick="ignoreOne(' + msg.rowIdx + ')">無視</button>';
+        html += '</div>';
+      });
+      html += '</div>';
+      
+      html += '</div>';
+    });
+    
+    document.getElementById('content').innerHTML = html;
+  }
+  
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+  
+  function escapeAttr(s) {
+    return String(s == null ? '' : s).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+  }
+  
+  function confirmLinkAll(lineUserId) {
+    var select = document.getElementById('select-' + lineUserId);
+    var familyId = select.value;
+    
+    if (!familyId) {
+      alert('家族を選択してください');
+      return;
+    }
+    
+    var familyName = select.options[select.selectedIndex].text;
+    if (!confirm(familyName + ' と紐付けます。\n（このLINE IDの全メッセージが処理されます）\n\nよろしいですか？')) return;
+    
+    setButtonsDisabled(true);
+    
+    google.script.run
+      .withSuccessHandler(function(result) {
+        google.script.run
+          .withSuccessHandler(function() {
+            alert(result.familyName + ' と紐付けました');
+            loadMessages();
+          })
+          .withFailureHandler(function(err) {
+            alert('紐付けは完了しましたが、残メッセージのクリーンアップに失敗: ' + err.message);
+            loadMessages();
+          })
+          .ignoreMessagesByUserId(lineUserId);
+      })
+      .withFailureHandler(function(err) {
+        alert('紐付けエラー: ' + err.message);
+        setButtonsDisabled(false);
+      })
+      .linkMessageToFamilyByLineUserId(lineUserId, familyId);
+  }
+  
+  function confirmIgnoreAll(lineUserId) {
+    if (!confirm('このLINE IDの全メッセージを「無視」にします。\nよろしいですか？')) return;
+    
+    setButtonsDisabled(true);
+    
+    google.script.run
+      .withSuccessHandler(function(result) {
+        alert(result.count + '件のメッセージを無視しました');
+        loadMessages();
+      })
+      .withFailureHandler(function(err) {
+        alert('エラー: ' + err.message);
+        setButtonsDisabled(false);
+      })
+      .ignoreMessagesByUserId(lineUserId);
+  }
+  
+  function ignoreOne(rowIdx) {
+    if (!confirm('このメッセージを無視します。よろしいですか？')) return;
+    
+    setButtonsDisabled(true);
+    
+    google.script.run
+      .withSuccessHandler(function() {
+        loadMessages();
+      })
+      .withFailureHandler(function(err) {
+        alert('エラー: ' + err.message);
+        setButtonsDisabled(false);
+      })
+      .ignoreMessage(rowIdx);
+  }
+  
+  function setButtonsDisabled(disabled) {
+    document.querySelectorAll('button').forEach(function(b) { b.disabled = disabled; });
+  }
+</script>
+</body>
+</html>
