@@ -1284,3 +1284,748 @@ function ignoreMessagesByUserId(lineUserId) {
   
   return { success: true, count: count };
 }
+
+// ============================================
+// Phase 3-1：Excel取込機能（月次データ取込）
+// ============================================
+
+/**
+ * 貼り付けTSVデータをパースしてプレビュー用データを返す
+ * @param {string} tsvText - Excelからコピーしたタブ区切りテキスト
+ * @return {Object} { ok, period, drawDate, families, errors, warnings }
+ */
+function parseBillingTSV(tsvText) {
+  if (!tsvText || typeof tsvText !== 'string') {
+    throw new Error('TSVデータが空です');
+  }
+  
+  var lines = tsvText.split(/\r?\n/);
+  if (lines.length < 8) {
+    throw new Error('TSVデータの行数が不足しています（最低8行必要）');
+  }
+  
+  var result = {
+    ok: true,
+    period: '',       // 配信月（例：260526）
+    drawDate: '',     // 引落日（例：5/26(火)）
+    subjectHiki: '',  // 件名（引落）
+    subjectChoku: '', // 件名（直払）
+    families: [],     // 家族別データ配列
+    errors: [],
+    warnings: []
+  };
+  
+  // === ヘッダ部の解析（最初の3行） ===
+  // 行1: A:空 B:空 C:「引落日」 D:5/26(火) ...
+  // 行2: A:空 B:空 C:「件名(引落)」 D:5/26のお引落し金額につきまして
+  // 行3: A:空 B:空 C:「件名(直払)」 D:今回分の授業料等につきまして
+  
+  var row1 = lines[0].split('\t');
+  var row2 = lines[1].split('\t');
+  var row3 = lines[2].split('\t');
+  
+// ヘッダ部（最初の数行）のみを対象に「引落日」「件名(引落)」「件名(直払)」を探す
+  // データ部のヘッダ行（生徒IDなどが並ぶ行）は除外する
+  for (var r = 0; r < 5; r++) {
+    var cells = lines[r].split('\t');
+    
+    // データ部のヘッダ行を検出したら、ヘッダ部の探索を終了
+    if (cells.indexOf('生徒ID') >= 0) break;
+    
+    for (var c = 0; c < cells.length; c++) {
+      var cellText = String(cells[c]).trim();
+      
+      // 完全一致で判定（「引落日」「件名(引落)」「件名(直払)」）
+      if (cellText === '引落日' && cells[c+1]) {
+        result.drawDate = String(cells[c+1]).trim();
+      }
+      if (cellText === '件名(引落)' && cells[c+1]) {
+        result.subjectHiki = String(cells[c+1]).trim();
+      }
+      if (cellText === '件名(直払)' && cells[c+1]) {
+        result.subjectChoku = String(cells[c+1]).trim();
+      }
+    }
+  }
+  
+  if (!result.drawDate) {
+    result.errors.push('引落日が見つかりません（A〜B列付近に「引落日」というラベルが必要）');
+    return result;
+  }
+  
+  // 配信月IDを生成（引落日「5/26(火)」から「260526」を生成は難しいので、現在年月+引落日から推定）
+  // 例：引落日が「5/26(火)」なら今年の5月26日 → 「260526」
+  result.period = _extractPeriodFromDrawDate(result.drawDate);
+  
+  // === データ部の解析 ===
+  // ヘッダ行を探す（「生徒ID」「学年」「生徒氏名」が並ぶ行）
+  var dataHeaderIdx = -1;
+  for (var i = 0; i < Math.min(lines.length, 15); i++) {
+    if (lines[i].indexOf('生徒ID') >= 0 && lines[i].indexOf('生徒氏名') >= 0) {
+      dataHeaderIdx = i;
+      break;
+    }
+  }
+  
+  if (dataHeaderIdx < 0) {
+    result.errors.push('データ部のヘッダ行が見つかりません（「生徒ID」「生徒氏名」を含む行が必要）');
+    return result;
+  }
+  
+  var headers = lines[dataHeaderIdx].split('\t');
+  var colIdx = {};
+  headers.forEach(function(h, idx) {
+    var clean = String(h).trim();
+    if (clean) colIdx[clean] = idx;
+  });
+  
+  // 必須列チェック
+  var requiredCols = ['生徒ID', '生徒氏名', '区分', '宛名', '同一家族', '合計金額'];
+  requiredCols.forEach(function(col) {
+    if (typeof colIdx[col] === 'undefined') {
+      result.errors.push('必須列が見つかりません：' + col);
+    }
+  });
+  if (result.errors.length > 0) return result;
+  
+  // === 家族ごとに整理 ===
+  var familyMap = {};  // familyId → familyData
+  
+  for (var i = dataHeaderIdx + 1; i < lines.length; i++) {
+    var line = lines[i];
+    if (!line.trim()) continue;  // 空行スキップ
+    
+    var cells = line.split('\t');
+    var studentIdRaw = String(cells[colIdx['生徒ID']] || '').trim();
+    if (!studentIdRaw || isNaN(Number(studentIdRaw))) continue;  // 生徒IDがない行スキップ
+    
+    var studentId = Number(studentIdRaw);
+    var family = String(cells[colIdx['同一家族']] || '').trim();
+    var familyId = 'F' + studentId;  // 仮（同一家族=2なら後で家族代表に統合）
+    
+    // 同一家族=2 の場合、家族代表の生徒IDで紐付け
+    // ⚠️ TSVだけでは家族代表が分からない場合があるので、Familiesシートから取得
+    if (family === '2' || family === 2) {
+      // この行は兄弟の追加分（独立した家族レコードは作らない）
+      // 親の家族IDを推測：同じメアドの「同一家族=1」の生徒を探す
+      // → Studentsシートから家族IDを引く
+      var realFamilyId = _findFamilyIdForStudent(studentId);
+      if (realFamilyId) {
+        familyId = realFamilyId;
+      } else {
+        result.warnings.push('生徒ID ' + studentId + ' の家族が特定できません（兄弟分の扱い）');
+        continue;
+      }
+    }
+    
+    if (!familyMap[familyId]) {
+      familyMap[familyId] = {
+        familyId: familyId,
+        addressee: String(cells[colIdx['宛名']] || '').trim(),
+        type: String(cells[colIdx['区分']] || '').trim(),
+        totalAmount: 0,
+        siblings: []  // 兄弟ごとの項目配列
+      };
+    }
+    
+    // 合計金額（家族代表の行のみ）
+    if (family === '1' || family === 1) {
+      var totalRaw = String(cells[colIdx['合計金額']] || '').trim();
+      var total = Number(totalRaw.replace(/[,\s]/g, ''));
+      if (!isNaN(total)) {
+        familyMap[familyId].totalAmount = total;
+      }
+    }
+    
+    // この生徒の兄弟ブロックを生成
+    var siblingBlock = _extractSiblingBlock(cells, colIdx, family);
+    if (siblingBlock) {
+      siblingBlock.studentId = studentId;
+      familyMap[familyId].siblings.push(siblingBlock);
+    }
+  }
+  
+  // 家族配列に変換
+  result.families = Object.keys(familyMap).map(function(fid) {
+    return familyMap[fid];
+  });
+  
+  return result;
+}
+
+/**
+ * 引落日テキスト（「5/26(火)」「2026/5/26」等）から配信月ID（YYMMDD）を抽出
+ */
+function _extractPeriodFromDrawDate(drawDate) {
+  // パターン1: "5/26(火)" or "5/26" → 当年を補完
+  var m = String(drawDate).match(/(\d{1,2})\/(\d{1,2})/);
+  if (m) {
+    var year = new Date().getFullYear() % 100;
+    var month = ('00' + m[1]).slice(-2);
+    var day = ('00' + m[2]).slice(-2);
+    return ('00' + year).slice(-2) + month + day;
+  }
+  // パターン2: "2026/5/26"
+  var m2 = String(drawDate).match(/(\d{4})\/(\d{1,2})\/(\d{1,2})/);
+  if (m2) {
+    var year = Number(m2[1]) % 100;
+    return ('00' + year).slice(-2) + ('00' + m2[2]).slice(-2) + ('00' + m2[3]).slice(-2);
+  }
+  return '';
+}
+
+/**
+ * Studentsシートから、ある生徒の家族IDを引く
+ */
+function _findFamilyIdForStudent(studentId) {
+  try {
+    var ss = getSpreadsheet();
+    var students = ss.getSheetByName('Students');
+    var data = students.getDataRange().getValues();
+    var header = data[0];
+    var sidIdx = header.indexOf('生徒ID');
+    var fidIdx = header.indexOf('家族ID');
+    if (sidIdx < 0 || fidIdx < 0) return null;
+    
+    for (var i = 1; i < data.length; i++) {
+      if (Number(data[i][sidIdx]) === Number(studentId)) {
+        return String(data[i][fidIdx] || '').trim();
+      }
+    }
+    return null;
+  } catch (e) {
+    console.error('[_findFamilyIdForStudent]', e);
+    return null;
+  }
+}
+
+/**
+ * 1行から、その生徒の兄弟ブロック（呼称＋項目配列）を抽出
+ * Excel構造：
+ *   - 同一家族=1：兄弟名１＋項目11〜19、兄弟名２＋項目21〜29、兄弟名３＋項目31〜39
+ *   - 同一家族=2：（家族代表行の兄弟名２に該当）
+ * @return { siblingName, items: [{label, amount}] }
+ */
+function _extractSiblingBlock(cells, colIdx, familyType) {
+  // 同一家族=1 の行：兄弟名１の項目を使う（自分が長子の場合）
+  // 同一家族=2 の行：その行自体は項目を持たない（家族代表の兄弟名2に項目がある）
+  
+  // 仕様簡略化：同一家族=1 の行はその行内の項目11〜19、項目21〜29、項目31〜39 すべてを処理
+  if (familyType === '1' || familyType === 1) {
+    // 兄弟ブロック1（11〜19）と兄弟ブロック2（21〜29）と兄弟ブロック3（31〜39）に分けて返す
+    var blocks = [];
+    
+    for (var b = 1; b <= 3; b++) {
+      var siblingNameCol = '兄弟名' + _toFullwidthDigit(b);
+      var siblingName = String(cells[colIdx[siblingNameCol]] || '').trim();
+      
+      var items = [];
+      for (var i = 1; i <= 10; i++) {
+        var itemCol = '項目' + _toFullwidthDigit(b) + _toFullwidthDigit(i);
+        var amountCol = '金額' + _toFullwidthDigit(b) + _toFullwidthDigit(i);
+        if (typeof colIdx[itemCol] === 'undefined') continue;
+        
+        var label = String(cells[colIdx[itemCol]] || '').trim();
+        var amountRaw = String(cells[colIdx[amountCol]] || '').trim();
+        var amount = Number(amountRaw.replace(/[,\s]/g, ''));
+        
+        if (label && !isNaN(amount) && amount > 0) {
+          items.push({ label: label, amount: amount });
+        }
+      }
+      
+      // 項目が1つでもあれば、そのブロックを返す（兄弟名は空でもOK＝1人っ子の場合）
+      if (items.length > 0) {
+        blocks.push({ siblingName: siblingName, items: items });
+      }
+    }
+    
+    return blocks.length > 0 ? blocks : null;
+  }
+  
+  // 同一家族=2 の行は、独立した項目を持たないのでスキップ
+  return null;
+}
+
+/**
+ * 半角数字→全角数字変換（1→１）
+ */
+function _toFullwidthDigit(n) {
+  var s = String(n);
+  return s.replace(/[0-9]/g, function(d) {
+    return String.fromCharCode(0xFF10 + parseInt(d, 10));
+  });
+}
+
+/**
+ * パース結果を取り込んで Billings/BillingItems シートに書き込む
+ * @param {Object} parsed - parseBillingTSV の戻り値
+ * @return {Object} 取込結果
+ */
+function importBillingData(parsed) {
+  if (!parsed || !parsed.ok || !parsed.period) {
+    throw new Error('取込データが不正です');
+  }
+  
+  var ss = getSpreadsheet();
+  var billings = ss.getSheetByName('Billings');
+  var items = ss.getSheetByName('BillingItems');
+  
+  if (!billings) throw new Error('Billingsシートがありません');
+  if (!items) throw new Error('BillingItemsシートがありません');
+  
+  // 既存の同月データを削除（再取込対応）
+  _deleteExistingBillingsByPeriod(parsed.period);
+  
+  var billingsRows = [];
+  var itemsRows = [];
+  
+  // siblings 配列はネスト構造（家族 → 兄弟ブロック群 → 項目群）
+  parsed.families.forEach(function(fam) {
+    // 各家族の siblings は配列の配列（複数の_extractSiblingBlockの結果）
+    var flatSiblings = [];
+    fam.siblings.forEach(function(blockArr) {
+      if (Array.isArray(blockArr)) {
+        blockArr.forEach(function(b) { flatSiblings.push(b); });
+      } else if (blockArr) {
+        flatSiblings.push(blockArr);
+      }
+    });
+    
+    // 配信本文生成
+    var body = _generateBillingBody(fam, flatSiblings, parsed.drawDate);
+    
+    // Billings行
+    billingsRows.push([
+      parsed.period,         // 配信月
+      fam.familyId,          // 家族ID
+      fam.totalAmount,       // 合計金額
+      parsed.drawDate,       // 引落日
+      body,                  // 配信本文
+      '未配信',               // 配信ステータス
+      '',                    // 配信日時
+      ''                     // エラー詳細
+    ]);
+    
+    // BillingItems行（兄弟ブロックごとに）
+    flatSiblings.forEach(function(sibling, sIdx) {
+      sibling.items.forEach(function(item, iIdx) {
+        itemsRows.push([
+          parsed.period,                    // 配信月
+          fam.familyId,                     // 家族ID
+          sibling.studentId || '',          // 生徒ID
+          sibling.siblingName || '',        // 兄弟呼称
+          item.label,                       // 項目名
+          item.amount,                      // 金額
+          sIdx * 10 + iIdx + 1              // 表示順
+        ]);
+      });
+    });
+  });
+  
+  // 一括書き込み
+  if (billingsRows.length > 0) {
+    billings.getRange(billings.getLastRow() + 1, 1, billingsRows.length, 8).setValues(billingsRows);
+  }
+  if (itemsRows.length > 0) {
+    items.getRange(items.getLastRow() + 1, 1, itemsRows.length, 7).setValues(itemsRows);
+  }
+  
+  return {
+    success: true,
+    period: parsed.period,
+    familyCount: parsed.families.length,
+    itemCount: itemsRows.length
+  };
+}
+
+/**
+ * 配信本文を生成（Word差し込み印刷を踏襲）
+ */
+function _generateBillingBody(family, siblings, drawDate) {
+  var msg = family.addressee + '\n\n';
+  
+  if (family.type === '自') {
+    // 自動引落版
+    msg += 'お世話になっております。次回' + drawDate + 'のお引落し金額についてご連絡いたします。\n\n';
+    msg += '引落し合計金額 ・・ ' + Number(family.totalAmount).toLocaleString() + '円　（内訳は下記をご確認ください。）\n\n';
+  } else {
+    // 直接持参版
+    msg += 'お世話になっております。\n';
+    msg += '今月はご持参いただく金額が以下の通りとなりますのでご連絡いたします。\n';
+    msg += 'こちらを、「' + drawDate + 'まで」にお持ちください。\n\n';
+    msg += '合計金額 ・・ ' + Number(family.totalAmount).toLocaleString() + '円　（内訳は下記をご確認ください。）\n\n';
+  }
+  
+  msg += '●金額の内訳\n\n';
+  
+  if (siblings.length === 1 && !siblings[0].siblingName) {
+    // 1人っ子・兄弟名なし
+    siblings[0].items.forEach(function(item) {
+        var prefix = (item.label.charAt(0) === '・') ? '' : '・';
+        msg += prefix + item.label + '　　' + Number(item.amount).toLocaleString() + '円\n';
+    });
+  } else {
+    // 兄弟あり
+    siblings.forEach(function(sib) {
+      if (sib.siblingName) {
+        var sibName = sib.siblingName;
+        // 既に【】で囲まれていればそのまま、なければ追加
+        if (sibName.charAt(0) !== '【') {
+          sibName = '【' + sibName + '】';
+        }
+        msg += sibName + '\n';
+      }
+      sib.items.forEach(function(item) {
+        var prefix = (item.label.charAt(0) === '・') ? '' : '・';
+        msg += prefix + item.label + '　　' + Number(item.amount).toLocaleString() + '円\n';
+      });
+      msg += '\n';
+    });
+  }
+  
+  msg += '\n以上、よろしくお願いいたします。\n\n福地';
+  return msg;
+}
+
+/**
+ * 既存の同月データを削除
+ */
+function _deleteExistingBillingsByPeriod(period) {
+  var ss = getSpreadsheet();
+  ['Billings', 'BillingItems'].forEach(function(sheetName) {
+    var sheet = ss.getSheetByName(sheetName);
+    if (!sheet) return;
+    var data = sheet.getDataRange().getValues();
+    if (data.length < 2) return;
+    
+    // periodは1列目（A列）想定
+    var rowsToDelete = [];
+    for (var i = data.length - 1; i >= 1; i--) {
+      if (String(data[i][0]) === String(period)) {
+        rowsToDelete.push(i + 1);
+      }
+    }
+    rowsToDelete.forEach(function(rowNum) {
+      sheet.deleteRow(rowNum);
+    });
+  });
+}
+
+/**
+ * テスト：サンプルTSVをパースして結果を確認
+ */
+function _testParseBillingTSV() {
+  // ダミーTSV（実際のExcelからコピーした想定）
+  var tsv = [
+    '\t\t引落日\t5/26(火)\t\t備考消す！',
+    '\t\t件名(引落)\t5/26のお引落し金額につきまして',
+    '\t\t件名(直払)\t今回分の授業料等につきまして',
+    '',
+    '番号\t生徒ID\t学年\t生徒氏名\tアドレス\t区分\t名字数\t宛名\t同一家族\t合計金額\t引落日\t兄弟名１\t項目１１\t金額１１\t項目１２\t金額１２',
+    '1\t20014\t高2\t藤本　晴\ttest@example.com\t自\t2\t藤本様\t1\t13200\t5/26(火)\t\t６月分授業料\t11000\t維持費\t2200'
+  ].join('\n');
+  
+  var result = parseBillingTSV(tsv);
+  Logger.log('結果: ' + JSON.stringify(result, null, 2));
+}
+
+// ============================================
+// Phase 3-2：配信プレビュー機能
+// ============================================
+
+/**
+ * 配信月の一覧を取得（Billingsシートから）
+ */
+function getBillingPeriods() {
+  var ss = getSpreadsheet();
+  var billings = ss.getSheetByName('Billings');
+  if (!billings) return [];
+  
+  var data = billings.getDataRange().getValues();
+  if (data.length < 2) return [];
+  
+  var periods = {};
+  for (var i = 1; i < data.length; i++) {
+    var p = String(data[i][0] || '').trim();
+    if (p) periods[p] = (periods[p] || 0) + 1;
+  }
+  
+  return Object.keys(periods)
+    .sort(function(a, b) { return b.localeCompare(a); })  // 新しい順
+    .map(function(p) { return { period: p, count: periods[p] }; });
+}
+
+/**
+ * 指定月の Billings 一覧を取得（家族情報・配信本文付き）
+ */
+function getBillingsByPeriod(period) {
+  if (!period) throw new Error('配信月を指定してください');
+  
+  var ss = getSpreadsheet();
+  var billings = ss.getSheetByName('Billings');
+  var families = ss.getSheetByName('Families');
+  
+  if (!billings || !families) throw new Error('Billings/Familiesシートが見つかりません');
+  
+  var billingsData = billings.getDataRange().getValues();
+  var familiesData = families.getDataRange().getValues();
+  
+  var bHeader = billingsData[0];
+  var bIdx = {
+    period: bHeader.indexOf('配信月'),
+    familyId: bHeader.indexOf('家族ID'),
+    totalAmount: bHeader.indexOf('合計金額'),
+    drawDate: bHeader.indexOf('引落日'),
+    body: bHeader.indexOf('配信本文'),
+    status: bHeader.indexOf('配信ステータス'),
+    sentAt: bHeader.indexOf('配信日時')
+  };
+  
+  var fHeader = familiesData[0];
+  var fIdx = {
+    familyId: fHeader.indexOf('家族ID'),
+    name: fHeader.indexOf('宛名'),
+    type: fHeader.indexOf('配信区分'),
+    lineUserId: fHeader.indexOf('保護者LINE_USER_ID')
+  };
+  
+  // 家族情報マップ
+  var familyMap = {};
+  for (var i = 1; i < familiesData.length; i++) {
+    var fid = familiesData[i][fIdx.familyId];
+    if (fid) {
+      familyMap[fid] = {
+        name: familiesData[i][fIdx.name] || '',
+        type: familiesData[i][fIdx.type] || '',
+        hasLineUserId: !!familiesData[i][fIdx.lineUserId]
+      };
+    }
+  }
+  
+  // Billingsから該当月を抽出
+  var result = [];
+  for (var i = 1; i < billingsData.length; i++) {
+    if (String(billingsData[i][bIdx.period]) !== String(period)) continue;
+    
+    var fid = billingsData[i][bIdx.familyId];
+    var fam = familyMap[fid] || {};
+    
+    result.push({
+      rowIdx: i + 1,
+      familyId: fid,
+      addressee: fam.name,
+      type: fam.type,
+      hasLineUserId: fam.hasLineUserId,
+      totalAmount: Number(billingsData[i][bIdx.totalAmount]) || 0,
+      drawDate: billingsData[i][bIdx.drawDate],
+      body: String(billingsData[i][bIdx.body] || ''),
+      status: billingsData[i][bIdx.status],
+      sentAt: billingsData[i][bIdx.sentAt]
+    });
+  }
+  
+  // 家族IDでソート
+  result.sort(function(a, b) {
+    return String(a.familyId).localeCompare(String(b.familyId));
+  });
+  
+  return result;
+}
+
+/**
+ * 配信本文を個別更新
+ */
+function updateBillingBody(rowIdx, newBody) {
+  if (!rowIdx || typeof newBody !== 'string') {
+    throw new Error('rowIdx と newBody が必要です');
+  }
+  
+  var ss = getSpreadsheet();
+  var billings = ss.getSheetByName('Billings');
+  var header = billings.getRange(1, 1, 1, billings.getLastColumn()).getValues()[0];
+  var bodyIdx = header.indexOf('配信本文');
+  
+  if (bodyIdx < 0) throw new Error('配信本文列が見つかりません');
+  
+  billings.getRange(rowIdx, bodyIdx + 1).setValue(newBody);
+  
+  return { success: true };
+}
+
+// ============================================
+// Phase 3-3：テスト配信機能
+// ============================================
+
+/**
+ * 管理者（ふくちさん）のLINE_USER_IDを取得
+ */
+function _getAdminLineUserId() {
+  try {
+    return String(PropertiesService.getScriptProperties().getProperty('ADMIN_LINE_USER_ID') || '').trim();
+  } catch (e) {
+    return '';
+  }
+}
+
+/**
+ * テスト配信：単一家族の配信本文を管理者LINEに送る
+ * @param {number} rowIdx - Billingsシートの行番号（1-based）
+ * @return {Object} 結果
+ */
+function testSendBillingToAdmin(rowIdx) {
+  if (!rowIdx) throw new Error('rowIdxが必要です');
+  
+  var adminId = _getAdminLineUserId();
+  if (!adminId) {
+    throw new Error('ADMIN_LINE_USER_IDが未設定です。スクリプトプロパティに登録してください。');
+  }
+  
+  var ss = getSpreadsheet();
+  var billings = ss.getSheetByName('Billings');
+  var header = billings.getRange(1, 1, 1, billings.getLastColumn()).getValues()[0];
+  var bodyIdx = header.indexOf('配信本文');
+  var familyIdIdx = header.indexOf('家族ID');
+  
+  var row = billings.getRange(rowIdx, 1, 1, billings.getLastColumn()).getValues()[0];
+  var body = String(row[bodyIdx] || '').trim();
+  var familyId = String(row[familyIdIdx] || '');
+  
+  if (!body) throw new Error('配信本文が空です');
+  
+  // テスト配信であることを明示するヘッダを追加
+  var testBody = '🧪 テスト配信【' + familyId + '】\n' +
+                 '━━━━━━━━━━━━━\n\n' + body;
+  
+  var sendResult = _pushLineMessage(adminId, testBody);
+  
+  return {
+    success: sendResult.success,
+    familyId: familyId,
+    error: sendResult.error || ''
+  };
+}
+
+/**
+ * テスト配信：指定月の全家族分を管理者LINEに連続送信
+ * @param {string} period - 配信月（例：260526）
+ * @return {Object} 結果
+ */
+function testSendAllBillingsToAdmin(period) {
+  if (!period) throw new Error('配信月を指定してください');
+  
+  var adminId = _getAdminLineUserId();
+  if (!adminId) {
+    throw new Error('ADMIN_LINE_USER_IDが未設定です。');
+  }
+  
+  var ss = getSpreadsheet();
+  var billings = ss.getSheetByName('Billings');
+  var data = billings.getDataRange().getValues();
+  var header = data[0];
+  
+  var bIdx = {
+    period: header.indexOf('配信月'),
+    familyId: header.indexOf('家族ID'),
+    body: header.indexOf('配信本文')
+  };
+  
+  // 該当月のデータだけ抽出
+  var targets = [];
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][bIdx.period]) === String(period)) {
+      targets.push({
+        familyId: data[i][bIdx.familyId],
+        body: String(data[i][bIdx.body] || '')
+      });
+    }
+  }
+  
+  if (targets.length === 0) {
+    throw new Error('該当月のデータがありません');
+  }
+  
+  // 開始通知
+  var startMsg = '🧪 テスト配信開始\n配信月：' + period + '\n対象：' + targets.length + '家族';
+  _pushLineMessage(adminId, startMsg);
+  Utilities.sleep(500);
+  
+  // 連続送信
+  var successCount = 0;
+  var errorCount = 0;
+  var errors = [];
+  
+  for (var i = 0; i < targets.length; i++) {
+    var t = targets[i];
+    if (!t.body) {
+      errorCount++;
+      errors.push(t.familyId + ': 本文なし');
+      continue;
+    }
+    
+    var testBody = '🧪 ' + (i + 1) + '/' + targets.length + ' 【' + t.familyId + '】\n' +
+                   '━━━━━━━━━━━━━\n\n' + t.body;
+    
+    var sendResult = _pushLineMessage(adminId, testBody);
+    if (sendResult.success) {
+      successCount++;
+    } else {
+      errorCount++;
+      errors.push(t.familyId + ': ' + (sendResult.error || '不明エラー'));
+    }
+    
+    // レート制限緩和（500ms間隔）
+    Utilities.sleep(500);
+  }
+  
+  // 完了通知
+  var endMsg = '✅ テスト配信完了\n成功：' + successCount + '\n失敗：' + errorCount;
+  _pushLineMessage(adminId, endMsg);
+  
+  return {
+    success: errorCount === 0,
+    totalCount: targets.length,
+    successCount: successCount,
+    errorCount: errorCount,
+    errors: errors
+  };
+}
+
+/**
+ * LINE Messaging API でメッセージ送信
+ * @return {Object} { success, error, status }
+ */
+function _pushLineMessage(userId, text) {
+  var token = _getLineMessagingAccessToken();
+  if (!token) {
+    return { success: false, error: 'LINE_MESSAGING_CHANNEL_ACCESS_TOKEN 未設定' };
+  }
+  
+  try {
+    var res = UrlFetchApp.fetch('https://api.line.me/v2/bot/message/push', {
+      method: 'post',
+      contentType: 'application/json',
+      headers: {
+        'Authorization': 'Bearer ' + token
+      },
+      payload: JSON.stringify({
+        to: userId,
+        messages: [{ type: 'text', text: text }]
+      }),
+      muteHttpExceptions: true
+    });
+    
+    var status = res.getResponseCode();
+    if (status === 200) {
+      return { success: true, status: status };
+    } else {
+      return {
+        success: false,
+        status: status,
+        error: 'HTTP ' + status + ': ' + res.getContentText().substring(0, 200)
+      };
+    }
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
