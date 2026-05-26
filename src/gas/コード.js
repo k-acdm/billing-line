@@ -393,7 +393,10 @@ function _renderLineLayoutHtml(title, bodyHtml) {
     '.line-card .line-msg.info    { background: #f8f9fa; border: 1.5px solid #d1d5db; color: #4b5563; text-align: left; }' +
     '.line-card .btn-line { display: block; width: 100%; margin-top: 16px; padding: 14px; background: linear-gradient(135deg, #06c755, #04a64b); color: #fff; border: 0; border-radius: 12px; font-size: 16px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 12px rgba(6,199,85,.3); text-decoration: none; }' +
     '.line-card .small-note { font-size: 12px; color: #888; margin-top: 14px; }' +
-    '.line-card .student-list { font-size: 14px; color: #4b5563; margin: 4px 0; }';
+'.line-card .student-list { font-size: 14px; color: #4b5563; margin: 4px 0; }' +
+    '.line-card .btn-line-hero { margin-top: 22px; padding: 20px; font-size: 19px; letter-spacing: .5px; box-shadow: 0 6px 18px rgba(6,199,85,.4); }' +
+    '.line-card .line-step-title { font-size: 24px; margin: 0 0 18px; }' +
+    '.line-card .line-step-lead { font-size: 16px; line-height: 1.9; margin: 14px 0 6px; color: #444; }';
   var html =
     '<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width,initial-scale=1">' +
@@ -414,11 +417,6 @@ function _renderLineErrorHtml(title, msg) {
 function _renderLineSuccessHtml(familyName, displayName) {
   var body =
     '<h1>✅ 登録完了！</h1>' +
-    '<div class="line-msg success">' +
-      '<strong>' + _escapeHtmlMinimal(displayName || 'LINE') + '</strong> さんの LINE と<br>' +
-      '<strong>' + _escapeHtmlMinimal(familyName) + '</strong> のご登録が完了しました。' +
-    '</div>' +
-    '<p>これから毎月の引き落とし金額のお知らせを<br>こちらの LINE にお送りします。</p>' +
     '<p class="small-note">このページを閉じて、LINE に戻ってください。</p>';
   return _renderLineLayoutHtml('登録完了', body);
 }
@@ -461,12 +459,11 @@ function _handleLineLoginStart(params) {
     + '&state=' + encodeURIComponent(state)
     + '&scope=' + encodeURIComponent('profile openid');
 
-  var body =
-    '<h1>📲 LINE に接続中…</h1>' +
-    '<p>LINE の認可画面に移動します。<br>少々お待ちください。</p>' +
-    '<a class="btn-line" target="_top" href="' + _escapeHtmlMinimal(authorizeUrl) + '">手動で LINE を開く</a>' +
-    '<script>setTimeout(function(){ (window.top || window).location.replace(' + JSON.stringify(authorizeUrl) + '); }, 200);<' + '/script>';
-  return _renderLineLayoutHtml('LINE に接続中', body);
+var body =
+    '<h1 class="line-step-title">📲 LINE 連携の最終ステップ</h1>' +
+    '<p class="line-step-lead">下のボタンをタップして、<br>LINE の認可画面に進んでください。</p>' +
+    '<a class="btn-line btn-line-hero" id="line-jump" target="_top" href="' + _escapeHtmlMinimal(authorizeUrl) + '">LINE を開く</a>';
+  return _renderLineLayoutHtml('LINE 連携の最終ステップ', body);
 }
 
 // --- Handler: lineLoginCallback（LINEから code を受け取る） ---

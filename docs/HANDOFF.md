@@ -1,7 +1,7 @@
 # 引き継ぎメモ
 
 ## 最終更新
-2026-05-24 塾PC作業終了時点（Phase 3-3 完成）
+2026-05-26 LINE関連画面の文言改修
 
 ## 現状サマリー：Phase 2B + Phase 3-1〜3-3 完成
 
@@ -216,6 +216,26 @@ git pull origin dev
 - 過去Excel：`引落額通知_DATA_22-04_.xlsx`
 - Wordテンプレ：`引落額通知_送信用フォーム_引落.docx`、`_直払.docx`
 
+## 2026-05-26 追加：LINE関連画面の文言改修
+
+マイ活アプリ本体での修正（コミット `4b940d3`、`ea02898`）を billing-line にも反映：
+
+### 修正1：LINE中継画面の自動遷移廃止
+- `_handleLineLoginStart` の中継画面HTML
+- 「LINE に接続中…」→「LINE 連携の最終ステップ」
+- 自動遷移ロジック（setTimeout + location.replace）を完全削除
+- ボタンを「LINE を開く」（btn-line-heroクラスでCTA化）
+- CSS追加：`.btn-line-hero`、`.line-step-title`、`.line-step-lead`
+
+### 修正2：登録完了画面の文言シンプル化
+- `_renderLineSuccessHtml` の本体ロジック簡略化
+- 「✅ 登録完了！」と「このページを閉じて、LINE に戻ってください。」のみ
+- 「のご登録が完了しました」「これから毎月の〜」等の固定文言を削除
+
+### 修正3：beforeunload 抑制 → 不要
+- billing-lineの register.html には beforeunload ハンドラが存在しない
+- マイ活側と異なり、フォーム入力保護が不要なため修正対象外
+
 ## Phase進捗マップ
 ✅ Phase 0：環境構築
 ✅ Phase 1A：スケルトン作成
@@ -236,3 +256,28 @@ git pull origin dev
 ✅ Phase 3-3：テスト配信機能 ← 今日完成！
 🔜 Phase 3-4：本配信機能（来月の本番タイミング）
 🔜 Phase 4：滞納フォロー機能
+
+
+## 新規入塾・退塾の運用ルール（2026-05-26追記）
+
+### 新規入塾者の追加
+
+1. 既存のExcel「引落額通知_DATA_22-04_.xlsx」の最新月シートに、その生徒の行を追加（既存業務フロー通り）
+2. billing-line スプレッドシートの Students シートに新規行追加
+   - 生徒ID（マイ活と共通）
+   - 家族ID（新規家族なら F+生徒ID、兄弟がいる家族なら既存の家族ID）
+   - 学年、生徒氏名、兄弟順位（1=長子/2=次子）、在籍フラグ TRUE
+3. 新規家族の場合は Families シートにも1行追加
+   - 家族ID、宛名（◯◯様）、配信区分（自/直）、配信有効フラグ TRUE
+   - 保護者LINE_USER_ID と 登録日は空のまま
+4. ID収集
+   - 管理画面の「URL発行」ボタンで個別URL発行→LINE送信
+   - または公式LINEを友だち追加してもらい、Webhook受信→未紐付けメッセージから紐付け
+
+### 退塾時の処理
+
+1. Excel側で該当生徒の行を削除（既存業務フロー）
+2. billing-line管理画面の登録済み家族一覧で「登録解除」ボタン
+   - Familiesシートの LINE_USER_ID と 登録日が空になり、配信対象から自動除外
+3. （推奨）Studentsシートで該当生徒の在籍フラグを FALSE に
+4. 兄弟がまだ在籍している場合は、Familiesは残して、退塾した生徒のStudents行だけ在籍フラグFALSEにする
