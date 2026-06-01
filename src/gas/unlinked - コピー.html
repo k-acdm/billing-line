@@ -305,7 +305,6 @@
       html += '<div class="user-msg-count">' + msgCount + '件のメッセージ</div>';
       html += '</div>';
       html += '<div class="user-actions">';
-      html += '<button class="btn" style="background:#7f8c8d;" onclick="copyLineId(\'' + escapeAttr(uid) + '\')">📋 ID コピー</button>';
       html += '<select class="family-select" id="select-' + escapeAttr(uid) + '">';
       html += _unregisteredFamilyOptions;
       html += '</select>';
@@ -415,15 +414,6 @@
       .ignoreMessage(rowIdx);
   }
   
-function copyLineId(lineUserId) {
-    navigator.clipboard.writeText(lineUserId).then(function() {
-      alert('LINE_USER_ID をコピーしました：\n' + lineUserId);
-    }).catch(function(err) {
-      // フォールバック：プロンプトで表示
-      prompt('LINE_USER_ID（Ctrl+Cでコピー）:', lineUserId);
-    });
-  }
-
   function setButtonsDisabled(disabled) {
     document.querySelectorAll('button').forEach(function(b) { b.disabled = disabled; });
   }

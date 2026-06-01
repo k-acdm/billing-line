@@ -877,7 +877,6 @@ function copyFullMessage() {
       html += '</div>';
       html += '<div class="message-body ' + bodyClass + '">' + escapeHtml(bodyText) + '</div>';
       html += '<div class="message-actions">';
-      html += '<button class="btn" style="background:#7f8c8d;" onclick="copyLineId(\'' + escapeHtml(msg.lineUserId) + '\')">📋 ID コピー</button>';
       html += '<select class="family-select" id="select-' + msg.rowIdx + '">';
       html += _unregisteredFamilyOptions;
       html += '</select>';
@@ -897,14 +896,6 @@ function copyFullMessage() {
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
-  }
-
-function copyLineId(lineUserId) {
-    navigator.clipboard.writeText(lineUserId).then(function() {
-      alert('LINE_USER_ID をコピーしました：\n' + lineUserId);
-    }).catch(function(err) {
-      prompt('LINE_USER_ID（Ctrl+Cでコピー）:', lineUserId);
-    });
   }
   
   function confirmLink(rowIdx) {

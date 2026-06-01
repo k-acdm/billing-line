@@ -1081,51 +1081,67 @@ function _testWebhookFollow() {
  * 未紐付けメッセージ一覧を取得
  */
 function getUnlinkedMessages() {
-  var ss = getSpreadsheet();
-  var sheet = ss.getSheetByName('IncomingMessages');
-  if (!sheet) return [];
-  
-  var data = sheet.getDataRange().getValues();
-  if (data.length < 2) return [];
-  
-  var header = data[0];
-  var idx = {
-    receivedAt: header.indexOf('受信日時'),
-    lineUserId: header.indexOf('LINE_USER_ID'),
-    displayName: header.indexOf('表示名'),
-    pictureUrl: header.indexOf('プロフィール画像URL'),
-    statusMessage: header.indexOf('ステータスメッセージ'),
-    messageType: header.indexOf('メッセージ種別'),
-    messageBody: header.indexOf('メッセージ本文'),
-    status: header.indexOf('紐付けステータス')
-  };
-  
-  var result = [];
-  for (var i = 1; i < data.length; i++) {
-    if (data[i][idx.status] !== '未紐付け') continue;
+  try {
+    var ss = getSpreadsheet();
+    var sheet = ss.getSheetByName('IncomingMessages');
+    if (!sheet) return [];
     
-    var receivedAt = data[i][idx.receivedAt];
-    var dateStr = '';
-    if (receivedAt instanceof Date) {
-      dateStr = Utilities.formatDate(receivedAt, 'Asia/Tokyo', 'MM/dd HH:mm');
-    } else if (receivedAt) {
-      dateStr = String(receivedAt);
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 2) return [];
+    
+    var header = sheet.getRange(1, 1, 1, 10).getValues()[0];
+    var idx = {
+      receivedAt: header.indexOf('受信日時'),
+      lineUserId: header.indexOf('LINE_USER_ID'),
+      displayName: header.indexOf('表示名'),
+      pictureUrl: header.indexOf('プロフィール画像URL'),
+      statusMessage: header.indexOf('ステータスメッセージ'),
+      messageType: header.indexOf('メッセージ種別'),
+      messageBody: header.indexOf('メッセージ本文'),
+      status: header.indexOf('紐付けステータス')
+    };
+    
+    // 最新300件のみスキャン、結果は最大30件
+    var startRow = Math.max(2, lastRow - 299);
+    var rowCount = lastRow - startRow + 1;
+    var data = sheet.getRange(startRow, 1, rowCount, 10).getValues();
+    
+    var result = [];
+    var maxResults = 30;
+    
+    for (var i = data.length - 1; i >= 0 && result.length < maxResults; i--) {
+      var status = String(data[i][idx.status] || '');
+      if (status !== '未紐付け') continue;
+      
+      var receivedAt = data[i][idx.receivedAt];
+      var dateStr = '';
+      if (receivedAt instanceof Date) {
+        dateStr = Utilities.formatDate(receivedAt, 'Asia/Tokyo', 'MM/dd HH:mm');
+      } else if (receivedAt) {
+        dateStr = String(receivedAt).substring(0, 50);
+      }
+      
+      var lineUserId = String(data[i][idx.lineUserId] || '').substring(0, 50);
+      var messageBody = String(data[i][idx.messageBody] || '').substring(0, 200);  // 200文字制限
+      
+      result.push({
+        rowIdx: startRow + i,
+        receivedAt: dateStr,
+        lineUserId: lineUserId,
+        lineUserIdShort: lineUserId.substring(0, 8) + '...',
+        displayName: String(data[i][idx.displayName] || '（不明）').substring(0, 50),
+        pictureUrl: String(data[i][idx.pictureUrl] || '').substring(0, 500),
+        statusMessage: String(data[i][idx.statusMessage] || '').substring(0, 100),
+        messageType: String(data[i][idx.messageType] || ''),
+        messageBody: messageBody
+      });
     }
     
-    result.push({
-      rowIdx: i + 1,  // 1-based row number for spreadsheet update
-      receivedAt: dateStr,
-      lineUserId: data[i][idx.lineUserId],
-      lineUserIdShort: String(data[i][idx.lineUserId] || '').substring(0, 8) + '...',
-      displayName: data[i][idx.displayName] || '（不明）',
-      pictureUrl: data[i][idx.pictureUrl] || '',
-      statusMessage: data[i][idx.statusMessage] || '',
-      messageType: data[i][idx.messageType],
-      messageBody: data[i][idx.messageBody]
-    });
+    return result;
+  } catch (e) {
+    console.error('[getUnlinkedMessages]', e);
+    return [];  // エラー時も必ず配列を返す
   }
-  
-  return result;
 }
 
 /**
