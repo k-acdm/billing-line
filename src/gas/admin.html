@@ -549,6 +549,7 @@
       </select>
       <span id="billing-count" style="color: #7f8c8d; font-size: 13px;"></span>
       <button class="btn btn-preview" onclick="testSendAll()" style="margin-left: 12px;">🧪 全家族テスト配信</button>
+      <button class="btn" style="background:#c0392b;" onclick="executeRealAll()">🚀 本配信実行</button>
     </div>
     <div id="billings-list">
       <div class="empty">配信月を選択してください</div>
@@ -1060,7 +1061,7 @@ function copyLineId(lineUserId) {
       .importBillingData(_parsedBilling);
   }
   
-  function onImportSuccess(result) {
+function onImportSuccess(result) {
     document.getElementById('preview-status').textContent = '';
     alert('取込完了！\n配信月：' + result.period + '\n家族数：' + result.familyCount + '\n項目数：' + result.itemCount);
     
@@ -1071,6 +1072,9 @@ function copyLineId(lineUserId) {
     _parsedBilling = null;
     
     document.querySelectorAll('.btn').forEach(function(b) { b.disabled = false; });
+    
+    // 配信月プルダウンを再読み込み（取込んだ月が選択される）
+    loadBillingPeriods();
   }
   
   function onImportError(error) {
@@ -1172,6 +1176,7 @@ function copyLineId(lineUserId) {
       html += '<div class="billing-card-actions">';
       html += '<button class="btn" onclick="saveBillingBody(' + idx + ', ' + b.rowIdx + ')">この本文を保存</button>';
       html += '<button class="btn btn-preview" onclick="testSendSingle(' + b.rowIdx + ', \'' + b.familyId + '\')">🧪 テスト配信</button>';
+      html += '<button class="btn" style="background:#c0392b;" onclick="executeRealSingle(' + b.rowIdx + ', \'' + b.familyId + '\')">🚀 本配信</button>';
       html += '<span class="billing-save-feedback" id="save-feedback-' + idx + '">✓ 保存しました</span>';
       html += '</div>';
       html += '</div>';
@@ -1256,6 +1261,92 @@ function copyLineId(lineUserId) {
         alert('エラー: ' + err.message);
       })
       .testSendAllBillingsToAdmin(period);
+  }
+
+// === 本配信 ===
+  function executeRealAll() {
+    var period = document.getElementById('period-select').value;
+    if (!period) {
+      alert('配信月を選択してください');
+      return;
+    }
+    
+    // 事前チェック
+    google.script.run
+      .withSuccessHandler(function(stats) {
+        var msg = '【本配信の事前確認】\n\n';
+        msg += '配信月：' + period + '\n';
+        msg += '対象家族数：' + stats.total + '\n';
+        msg += '送信予定：' + stats.willSend + '\n';
+        msg += '配信済（スキップ）：' + stats.alreadySent + '\n';
+        msg += 'LINE未登録（スキップ）：' + stats.noLineId + '\n';
+        msg += '本文なし（スキップ）：' + stats.noBody + '\n\n';
+        
+        if (stats.willSend === 0) {
+          alert(msg + '配信対象がありません。');
+          return;
+        }
+        
+        msg += '⚠️ ' + stats.willSend + '家族に実際にLINE配信します。\n';
+        msg += '配信したメッセージは取り消せません。\n\n';
+        msg += '本当に実行しますか？';
+        
+        if (!confirm(msg)) return;
+        
+        // 二重確認
+        var finalConfirm = prompt('最終確認：「配信」と入力してください');
+        if (finalConfirm !== '配信') {
+          alert('キャンセルしました');
+          return;
+        }
+        
+        // 本配信実行
+        document.querySelectorAll('.btn').forEach(function(b) { b.disabled = true; });
+        
+        google.script.run
+          .withSuccessHandler(function(result) {
+            document.querySelectorAll('.btn').forEach(function(b) { b.disabled = false; });
+            var s = result.stats;
+            var resultMsg = '✅ 本配信完了\n\n';
+            resultMsg += '配信成功：' + s.sent + '\n';
+            resultMsg += 'スキップ（配信済）：' + s.skipped_already_sent + '\n';
+            resultMsg += 'スキップ（LINE未登録）：' + s.skipped_no_lineid + '\n';
+            resultMsg += 'スキップ（本文なし）：' + s.skipped_no_body + '\n';
+            resultMsg += 'エラー：' + s.errors;
+            if (s.errorList && s.errorList.length > 0) {
+              resultMsg += '\n\nエラー詳細:\n' + s.errorList.slice(0, 5).join('\n');
+            }
+            alert(resultMsg);
+            loadBillingsByPeriod();  // 画面再読み込み
+          })
+          .withFailureHandler(function(err) {
+            document.querySelectorAll('.btn').forEach(function(b) { b.disabled = false; });
+            alert('エラー: ' + err.message);
+          })
+          .executeRealBilling(period);
+      })
+      .withFailureHandler(function(err) {
+        alert('事前チェックエラー: ' + err.message);
+      })
+      .preCheckRealBilling(period);
+  }
+  
+  function executeRealSingle(rowIdx, familyId) {
+    if (!confirm('⚠️ ' + familyId + ' に実際にLINE配信します。\n配信したメッセージは取り消せません。\n\n本当に実行しますか？')) return;
+    
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (result.success) {
+          alert('✅ ' + result.familyId + ' に配信しました');
+          loadBillingsByPeriod();
+        } else {
+          alert('❌ 配信エラー: ' + result.error);
+        }
+      })
+      .withFailureHandler(function(err) {
+        alert('エラー: ' + err.message);
+      })
+      .executeRealBillingSingle(rowIdx);
   }
 
 </script>

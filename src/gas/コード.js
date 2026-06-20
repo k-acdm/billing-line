@@ -2042,3 +2042,265 @@ function _pushLineMessage(userId, text) {
     return { success: false, error: String(e) };
   }
 }
+
+// ============================================
+// Phase 3-4：本配信機能
+// ============================================
+
+/**
+ * 本配信実行：指定月の全家族にLINE配信
+ * 安全策：
+ * - 既に「配信済」のレコードはスキップ
+ * - LINE_USER_ID 未登録の家族はスキップ
+ * - 配信ステータスを「配信済」に更新、配信日時を記録
+ * - エラー時は「エラー」状態にしてエラー詳細を保存
+ * 
+ * @param {string} period - 配信月（例：260626）
+ * @return {Object} 結果
+ */
+function executeRealBilling(period) {
+  if (!period) throw new Error('配信月を指定してください');
+  
+  var ss = getSpreadsheet();
+  var billings = ss.getSheetByName('Billings');
+  var families = ss.getSheetByName('Families');
+  
+  if (!billings || !families) throw new Error('Billings/Familiesシートが見つかりません');
+  
+  var billingsData = billings.getDataRange().getValues();
+  var familiesData = families.getDataRange().getValues();
+  
+  var bHeader = billingsData[0];
+  var bIdx = {
+    period: bHeader.indexOf('配信月'),
+    familyId: bHeader.indexOf('家族ID'),
+    body: bHeader.indexOf('配信本文'),
+    status: bHeader.indexOf('配信ステータス'),
+    sentAt: bHeader.indexOf('配信日時'),
+    error: bHeader.indexOf('エラー詳細')
+  };
+  
+  var fHeader = familiesData[0];
+  var fIdx = {
+    familyId: fHeader.indexOf('家族ID'),
+    name: fHeader.indexOf('宛名'),
+    lineUserId: fHeader.indexOf('保護者LINE_USER_ID')
+  };
+  
+  // 家族IDからLINE_USER_IDを引くマップ
+  var lineUserIdMap = {};
+  for (var i = 1; i < familiesData.length; i++) {
+    var fid = familiesData[i][fIdx.familyId];
+    if (fid) {
+      lineUserIdMap[fid] = String(familiesData[i][fIdx.lineUserId] || '').trim();
+    }
+  }
+  
+  // 該当月の配信対象を抽出
+  var targets = [];
+  for (var i = 1; i < billingsData.length; i++) {
+    if (String(billingsData[i][bIdx.period]) !== String(period)) continue;
+    
+    var familyId = billingsData[i][bIdx.familyId];
+    var currentStatus = String(billingsData[i][bIdx.status] || '');
+    
+    targets.push({
+      rowIdx: i + 1,
+      familyId: familyId,
+      lineUserId: lineUserIdMap[familyId] || '',
+      body: String(billingsData[i][bIdx.body] || ''),
+      currentStatus: currentStatus
+    });
+  }
+  
+  if (targets.length === 0) {
+    throw new Error('該当月の配信データがありません');
+  }
+  
+  // 配信実行
+  var stats = {
+    total: targets.length,
+    sent: 0,
+    skipped_already_sent: 0,
+    skipped_no_lineid: 0,
+    skipped_no_body: 0,
+    errors: 0,
+    errorList: []
+  };
+  
+  for (var i = 0; i < targets.length; i++) {
+    var t = targets[i];
+    
+    // 既に配信済はスキップ
+    if (t.currentStatus === '配信済') {
+      stats.skipped_already_sent++;
+      continue;
+    }
+    
+    // LINE_USER_ID 未登録はスキップ
+    if (!t.lineUserId) {
+      stats.skipped_no_lineid++;
+      _updateBillingStatus(billings, t.rowIdx, bIdx, 'スキップ', '', 'LINE_USER_ID未登録');
+      continue;
+    }
+    
+    // 配信本文が空はスキップ
+    if (!t.body) {
+      stats.skipped_no_body++;
+      _updateBillingStatus(billings, t.rowIdx, bIdx, 'エラー', '', '配信本文が空');
+      continue;
+    }
+    
+    // 配信実行
+    var result = _pushLineMessage(t.lineUserId, t.body);
+    
+    if (result.success) {
+      stats.sent++;
+      _updateBillingStatus(billings, t.rowIdx, bIdx, '配信済', new Date(), '');
+    } else {
+      stats.errors++;
+      stats.errorList.push(t.familyId + ': ' + (result.error || '不明エラー'));
+      _updateBillingStatus(billings, t.rowIdx, bIdx, 'エラー', '', result.error || '不明エラー');
+    }
+    
+    // レート制限緩和（500ms間隔）
+    Utilities.sleep(500);
+  }
+  
+  return {
+    success: stats.errors === 0,
+    stats: stats
+  };
+}
+
+/**
+ * Billingsシートの配信ステータス・配信日時・エラー詳細を更新
+ */
+function _updateBillingStatus(sheet, rowIdx, bIdx, status, sentAt, error) {
+  sheet.getRange(rowIdx, bIdx.status + 1).setValue(status);
+  if (bIdx.sentAt >= 0) {
+    sheet.getRange(rowIdx, bIdx.sentAt + 1).setValue(sentAt || '');
+  }
+  if (bIdx.error >= 0) {
+    sheet.getRange(rowIdx, bIdx.error + 1).setValue(error || '');
+  }
+}
+
+/**
+ * 個別本配信：1家族だけにLINE配信
+ * （配信失敗時のリトライ・個別送信用）
+ */
+function executeRealBillingSingle(rowIdx) {
+  if (!rowIdx) throw new Error('rowIdxが必要です');
+  
+  var ss = getSpreadsheet();
+  var billings = ss.getSheetByName('Billings');
+  var families = ss.getSheetByName('Families');
+  
+  var bHeader = billings.getRange(1, 1, 1, billings.getLastColumn()).getValues()[0];
+  var bIdx = {
+    familyId: bHeader.indexOf('家族ID'),
+    body: bHeader.indexOf('配信本文'),
+    status: bHeader.indexOf('配信ステータス'),
+    sentAt: bHeader.indexOf('配信日時'),
+    error: bHeader.indexOf('エラー詳細')
+  };
+  
+  var row = billings.getRange(rowIdx, 1, 1, billings.getLastColumn()).getValues()[0];
+  var familyId = row[bIdx.familyId];
+  var body = String(row[bIdx.body] || '');
+  
+  if (!body) throw new Error('配信本文が空です');
+  
+  // 家族のLINE_USER_IDを引く
+  var familiesData = families.getDataRange().getValues();
+  var fHeader = familiesData[0];
+  var fFidIdx = fHeader.indexOf('家族ID');
+  var fLineIdx = fHeader.indexOf('保護者LINE_USER_ID');
+  
+  var lineUserId = '';
+  for (var i = 1; i < familiesData.length; i++) {
+    if (familiesData[i][fFidIdx] === familyId) {
+      lineUserId = String(familiesData[i][fLineIdx] || '').trim();
+      break;
+    }
+  }
+  
+  if (!lineUserId) throw new Error(familyId + ' のLINE_USER_IDが未登録です');
+  
+  // 配信実行
+  var result = _pushLineMessage(lineUserId, body);
+  
+  if (result.success) {
+    _updateBillingStatus(billings, rowIdx, bIdx, '配信済', new Date(), '');
+    return { success: true, familyId: familyId };
+  } else {
+    _updateBillingStatus(billings, rowIdx, bIdx, 'エラー', '', result.error || '不明エラー');
+    return { success: false, familyId: familyId, error: result.error };
+  }
+}
+
+/**
+ * 本配信の事前チェック：配信対象の集計を返す
+ * （実際の配信はしない）
+ */
+function preCheckRealBilling(period) {
+  if (!period) throw new Error('配信月を指定してください');
+  
+  var ss = getSpreadsheet();
+  var billings = ss.getSheetByName('Billings');
+  var families = ss.getSheetByName('Families');
+  
+  var billingsData = billings.getDataRange().getValues();
+  var familiesData = families.getDataRange().getValues();
+  
+  var bHeader = billingsData[0];
+  var bIdx = {
+    period: bHeader.indexOf('配信月'),
+    familyId: bHeader.indexOf('家族ID'),
+    body: bHeader.indexOf('配信本文'),
+    status: bHeader.indexOf('配信ステータス')
+  };
+  
+  var fHeader = familiesData[0];
+  var fFidIdx = fHeader.indexOf('家族ID');
+  var fLineIdx = fHeader.indexOf('保護者LINE_USER_ID');
+  
+  var lineUserIdMap = {};
+  for (var i = 1; i < familiesData.length; i++) {
+    var fid = familiesData[i][fFidIdx];
+    if (fid) {
+      lineUserIdMap[fid] = String(familiesData[i][fLineIdx] || '').trim();
+    }
+  }
+  
+  var stats = {
+    total: 0,
+    willSend: 0,
+    alreadySent: 0,
+    noLineId: 0,
+    noBody: 0
+  };
+  
+  for (var i = 1; i < billingsData.length; i++) {
+    if (String(billingsData[i][bIdx.period]) !== String(period)) continue;
+    stats.total++;
+    
+    var familyId = billingsData[i][bIdx.familyId];
+    var body = String(billingsData[i][bIdx.body] || '');
+    var status = String(billingsData[i][bIdx.status] || '');
+    var lineUserId = lineUserIdMap[familyId] || '';
+    
+    if (status === '配信済') {
+      stats.alreadySent++;
+    } else if (!lineUserId) {
+      stats.noLineId++;
+    } else if (!body) {
+      stats.noBody++;
+    } else {
+      stats.willSend++;
+    }
+  }
+  
+  return stats;
+}
