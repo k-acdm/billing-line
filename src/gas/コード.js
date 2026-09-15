@@ -1773,77 +1773,111 @@ function getBillingPeriods() {
  * 指定月の Billings 一覧を取得（家族情報・配信本文付き）
  */
 function getBillingsByPeriod(period) {
-  if (!period) throw new Error('配信月を指定してください');
-  
-  var ss = getSpreadsheet();
-  var billings = ss.getSheetByName('Billings');
-  var families = ss.getSheetByName('Families');
-  
-  if (!billings || !families) throw new Error('Billings/Familiesシートが見つかりません');
-  
-  var billingsData = billings.getDataRange().getValues();
-  var familiesData = families.getDataRange().getValues();
-  
-  var bHeader = billingsData[0];
-  var bIdx = {
-    period: bHeader.indexOf('配信月'),
-    familyId: bHeader.indexOf('家族ID'),
-    totalAmount: bHeader.indexOf('合計金額'),
-    drawDate: bHeader.indexOf('引落日'),
-    body: bHeader.indexOf('配信本文'),
-    status: bHeader.indexOf('配信ステータス'),
-    sentAt: bHeader.indexOf('配信日時')
-  };
-  
-  var fHeader = familiesData[0];
-  var fIdx = {
-    familyId: fHeader.indexOf('家族ID'),
-    name: fHeader.indexOf('宛名'),
-    type: fHeader.indexOf('配信区分'),
-    lineUserId: fHeader.indexOf('保護者LINE_USER_ID')
-  };
-  
-  // 家族情報マップ
-  var familyMap = {};
-  for (var i = 1; i < familiesData.length; i++) {
-    var fid = familiesData[i][fIdx.familyId];
-    if (fid) {
-      familyMap[fid] = {
-        name: familiesData[i][fIdx.name] || '',
-        type: familiesData[i][fIdx.type] || '',
-        hasLineUserId: !!familiesData[i][fIdx.lineUserId]
-      };
+  try {
+    if (!period) return [];
+
+    var ss = getSpreadsheet();
+    var billings = ss.getSheetByName('Billings');
+    var families = ss.getSheetByName('Families');
+
+    if (!billings || !families) {
+      console.error('[getBillingsByPeriod] Billings/Familiesシートが見つかりません');
+      return [];
     }
-  }
-  
-  // Billingsから該当月を抽出
-  var result = [];
-  for (var i = 1; i < billingsData.length; i++) {
-    if (String(billingsData[i][bIdx.period]) !== String(period)) continue;
-    
-    var fid = billingsData[i][bIdx.familyId];
-    var fam = familyMap[fid] || {};
-    
-    result.push({
-      rowIdx: i + 1,
-      familyId: fid,
-      addressee: fam.name,
-      type: fam.type,
-      hasLineUserId: fam.hasLineUserId,
-      totalAmount: Number(billingsData[i][bIdx.totalAmount]) || 0,
-      drawDate: billingsData[i][bIdx.drawDate],
-      body: String(billingsData[i][bIdx.body] || ''),
-      status: billingsData[i][bIdx.status],
-      sentAt: billingsData[i][bIdx.sentAt]
+
+    var billingsData = billings.getDataRange().getValues();
+    var familiesData = families.getDataRange().getValues();
+
+    if (!billingsData || billingsData.length < 1 || !familiesData || familiesData.length < 1) {
+      return [];
+    }
+
+    var bHeader = billingsData[0];
+    var bIdx = {
+      period: bHeader.indexOf('配信月'),
+      familyId: bHeader.indexOf('家族ID'),
+      totalAmount: bHeader.indexOf('合計金額'),
+      drawDate: bHeader.indexOf('引落日'),
+      body: bHeader.indexOf('配信本文'),
+      status: bHeader.indexOf('配信ステータス'),
+      sentAt: bHeader.indexOf('配信日時')
+    };
+
+    var fHeader = familiesData[0];
+    var fIdx = {
+      familyId: fHeader.indexOf('家族ID'),
+      name: fHeader.indexOf('宛名'),
+      type: fHeader.indexOf('配信区分'),
+      lineUserId: fHeader.indexOf('保護者LINE_USER_ID')
+    };
+
+    // 必須列が見つからない場合は空配列（列名ズレでの undefined 混入を防ぐ）
+    if (bIdx.period < 0 || bIdx.familyId < 0) {
+      console.error('[getBillingsByPeriod] Billingsの必須列（配信月/家族ID）が見つかりません', bIdx);
+      return [];
+    }
+
+    // セルの値を必ず「シリアライズ可能なプリミティブ」に変換するヘルパー
+    // ※ google.script.run は Date/undefined 等が混ざると成功ハンドラに null を返すため
+    var cellStr = function(row, col) {
+      if (col < 0) return '';
+      var v = row[col];
+      if (v === null || v === undefined) return '';
+      if (v instanceof Date) {
+        try {
+          return Utilities.formatDate(v, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm');
+        } catch (e) {
+          return String(v);
+        }
+      }
+      return String(v);
+    };
+
+    // 家族情報マップ
+    var familyMap = {};
+    for (var i = 1; i < familiesData.length; i++) {
+      var fid = familiesData[i][fIdx.familyId];
+      if (fid) {
+        familyMap[String(fid)] = {
+          name: fIdx.name >= 0 ? String(familiesData[i][fIdx.name] || '') : '',
+          type: fIdx.type >= 0 ? String(familiesData[i][fIdx.type] || '') : '',
+          hasLineUserId: fIdx.lineUserId >= 0 ? !!familiesData[i][fIdx.lineUserId] : false
+        };
+      }
+    }
+
+    // Billingsから該当月を抽出
+    var result = [];
+    for (var i = 1; i < billingsData.length; i++) {
+      if (String(billingsData[i][bIdx.period]) !== String(period)) continue;
+
+      var fid = String(billingsData[i][bIdx.familyId] || '');
+      var fam = familyMap[fid] || {};
+
+      result.push({
+        rowIdx: i + 1,
+        familyId: fid,
+        addressee: String(fam.name || ''),
+        type: String(fam.type || ''),
+        hasLineUserId: !!fam.hasLineUserId,
+        totalAmount: bIdx.totalAmount >= 0 ? (Number(billingsData[i][bIdx.totalAmount]) || 0) : 0,
+        drawDate: cellStr(billingsData[i], bIdx.drawDate),
+        body: cellStr(billingsData[i], bIdx.body),
+        status: cellStr(billingsData[i], bIdx.status),
+        sentAt: cellStr(billingsData[i], bIdx.sentAt)
+      });
+    }
+
+    // 家族IDでソート
+    result.sort(function(a, b) {
+      return String(a.familyId).localeCompare(String(b.familyId));
     });
+
+    return result;
+  } catch (e) {
+    console.error('[getBillingsByPeriod]', e);
+    return [];  // エラー時も必ず配列を返す（getUnlinkedMessages と同じ方針）
   }
-  
-  // 家族IDでソート
-  result.sort(function(a, b) {
-    return String(a.familyId).localeCompare(String(b.familyId));
-  });
-  
-  return result;
 }
 
 /**

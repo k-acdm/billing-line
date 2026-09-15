@@ -1136,11 +1136,20 @@ function onImportSuccess(result) {
   }
   
   function renderBillings(billings) {
-    document.getElementById('billing-count').textContent = 
+    // null ガード：サーバー側の戻り値がシリアライズ失敗等で null になっても
+    // 「読み込み中...」で固まらないようにする（応急）
+    if (!billings || !Array.isArray(billings)) {
+      document.getElementById('billing-count').textContent = '';
+      document.getElementById('billings-list').innerHTML =
+        '<div class="empty">配信データの読み込みに失敗しました。時間をおいて再度お試しください。</div>';
+      return;
+    }
+
+    document.getElementById('billing-count').textContent =
       '（' + billings.length + '家族）';
-    
+
     if (billings.length === 0) {
-      document.getElementById('billings-list').innerHTML = 
+      document.getElementById('billings-list').innerHTML =
         '<div class="empty">該当月の配信データがありません</div>';
       return;
     }
