@@ -1542,7 +1542,9 @@ function _extractSiblingBlock(cells, colIdx, familyType) {
         var amountRaw = String(cells[colIdx[amountCol]] || '').trim();
         var amount = Number(amountRaw.replace(/[,\s]/g, ''));
         
-        if (label && !isNaN(amount) && amount > 0) {
+        // labelがあり、amountが数値で、かつ0でなければ取り込む（マイナス=返金項目も対象）
+        // ゼロ（空欄セル＝金額なし）は除外
+        if (label && !isNaN(amount) && amount !== 0) {
           items.push({ label: label, amount: amount });
         }
       }
