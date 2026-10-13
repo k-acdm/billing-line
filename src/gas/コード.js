@@ -1601,10 +1601,15 @@ function importBillingData(parsed) {
   
   if (!billings) throw new Error('Billingsシートがありません');
   if (!items) throw new Error('BillingItemsシートがありません');
-  
+
+  // 【案A】再取込で配信実績を消さないため、削除前に同月の既存行から
+  // 配信実績（配信ステータス／配信日時／エラー詳細）を家族IDごとに退避する。
+  // 本文・金額・内訳は後段で新しく再生成するが、実績は旧行から引き継ぐ。
+  var prevStatusMap = _snapshotBillingStatusByPeriod(billings, parsed.period);
+
   // 既存の同月データを削除（再取込対応）
   _deleteExistingBillingsByPeriod(parsed.period);
-  
+
   var billingsRows = [];
   var itemsRows = [];
   
@@ -1622,7 +1627,14 @@ function importBillingData(parsed) {
     
     // 配信本文生成
     var body = _generateBillingBody(fam, flatSiblings, parsed.drawDate);
-    
+
+    // 【案A】旧行に配信実績があれば引き継ぐ（金額が変わっていても引き継ぐ。
+    // 「金額変更で未配信に戻す」処理は入れない）。無ければ従来どおり '未配信'・空。
+    var prev = prevStatusMap[String(fam.familyId)];
+    var carryStatus = prev ? prev.status : '未配信';
+    var carrySentAt = prev ? prev.sentAt : '';
+    var carryError  = prev ? prev.error  : '';
+
     // Billings行
     billingsRows.push([
       parsed.period,         // 配信月
@@ -1630,9 +1642,9 @@ function importBillingData(parsed) {
       fam.totalAmount,       // 合計金額
       parsed.drawDate,       // 引落日
       body,                  // 配信本文
-      '未配信',               // 配信ステータス
-      '',                    // 配信日時
-      ''                     // エラー詳細
+      carryStatus,           // 配信ステータス（旧行から引き継ぎ）
+      carrySentAt,           // 配信日時（旧行から引き継ぎ）
+      carryError             // エラー詳細（旧行から引き継ぎ）
     ]);
     
     // BillingItems行（兄弟ブロックごとに）
@@ -1714,6 +1726,47 @@ function _generateBillingBody(family, siblings, drawDate) {
   
   msg += '\n以上、よろしくお願いいたします。\n\n福地';
   return msg;
+}
+
+/**
+ * 【案A】削除前スナップショット：同月の既存Billings行から配信実績を退避する。
+ * @param {Sheet} billings - Billingsシート
+ * @param {string} period - 配信月（例: 260928）
+ * @return {Object} 家族ID(文字列) → { status, sentAt, error } のマップ。
+ *   既存行が無い家族は含まれない（呼び出し側で '未配信'・空にフォールバック）。
+ *   配信日時(sentAt)・エラー詳細(error)はセルの生値のまま保持し、再書き込み時も
+ *   同じ値（Dateや文字列）をそのまま書き戻す。
+ */
+function _snapshotBillingStatusByPeriod(billings, period) {
+  var map = {};
+  if (!billings) return map;
+  var data = billings.getDataRange().getValues();
+  if (!data || data.length < 2) return map;
+
+  var header = data[0];
+  var idx = {
+    period: header.indexOf('配信月'),
+    familyId: header.indexOf('家族ID'),
+    status: header.indexOf('配信ステータス'),
+    sentAt: header.indexOf('配信日時'),
+    error: header.indexOf('エラー詳細')
+  };
+  // 必須列（配信月・家族ID・配信ステータス）が無ければ退避しない
+  if (idx.period < 0 || idx.familyId < 0 || idx.status < 0) return map;
+
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][idx.period]) !== String(period)) continue;
+    var fid = String(data[i][idx.familyId] || '');
+    if (!fid) continue;
+    // 同一家族が複数行ある場合は最初の1件を採用
+    if (map[fid]) continue;
+    map[fid] = {
+      status: data[i][idx.status],
+      sentAt: idx.sentAt >= 0 ? data[i][idx.sentAt] : '',
+      error: idx.error >= 0 ? data[i][idx.error] : ''
+    };
+  }
+  return map;
 }
 
 /**
