@@ -9,14 +9,26 @@ function getConfig() {
   const props = PropertiesService.getScriptProperties();
   return {
     spreadsheetId: props.getProperty('SPREADSHEET_ID'),
+    recipientsSpreadsheetId: props.getProperty('RECIPIENTS_SPREADSHEET_ID'),
     lineChannelAccessToken: props.getProperty('LINE_CHANNEL_ACCESS_TOKEN'),
     adminLineUserIds: props.getProperty('ADMIN_LINE_USER_IDS')
   };
 }
 
+// 請求データ（Billings / BillingItems / FollowUps / Config / Tokens / IncomingMessages）用
 function getSpreadsheet() {
   const config = getConfig();
   return SpreadsheetApp.openById(config.spreadsheetId);
+}
+
+// 送信先データ（Families / Students）用：共有スプレッドシート line-recipients
+// schedule-line / proposal-line と同じスクリプトプロパティ RECIPIENTS_SPREADSHEET_ID を参照
+function getRecipientsSpreadsheet() {
+  const config = getConfig();
+  if (!config.recipientsSpreadsheetId) {
+    throw new Error('RECIPIENTS_SPREADSHEET_ID が ScriptProperties に未設定です（line-recipients のスプレッドシートID）。');
+  }
+  return SpreadsheetApp.openById(config.recipientsSpreadsheetId);
 }
 
 // ============================================
@@ -48,7 +60,7 @@ function doGet(e) {
 // API：未登録家族一覧取得
 // ============================================
 function getUnregisteredFamilies() {
-  const ss = getSpreadsheet();
+  const ss = getRecipientsSpreadsheet();
   const familiesSheet = ss.getSheetByName('Families');
   const studentsSheet = ss.getSheetByName('Students');
   
@@ -160,8 +172,8 @@ function generateToken() {
 function issueTokenForFamily(familyId) {
   const ss = getSpreadsheet();
   const tokensSheet = ss.getSheetByName('Tokens');
-  const familiesSheet = ss.getSheetByName('Families');
-  
+  const familiesSheet = getRecipientsSpreadsheet().getSheetByName('Families');
+
   // 家族存在確認
   const familiesData = familiesSheet.getDataRange().getValues();
   const familiesHeader = familiesData[0];
@@ -314,9 +326,10 @@ function _deleteTempLineToken(tempToken) {
 function _findFamilyByToken(token) {
   if (!token) return null;
   var ss = getSpreadsheet();
+  var rss = getRecipientsSpreadsheet();
   var tokensSheet = ss.getSheetByName('Tokens');
-  var familiesSheet = ss.getSheetByName('Families');
-  var studentsSheet = ss.getSheetByName('Students');
+  var familiesSheet = rss.getSheetByName('Families');
+  var studentsSheet = rss.getSheetByName('Students');
 
   var tokensData = tokensSheet.getDataRange().getValues();
   var tHeader = tokensData[0];
@@ -620,9 +633,9 @@ function _handleLineLoginRegister(params) {
     return _renderLineErrorHtml('内部エラー', 'セッション情報が壊れています。最初からやり直してください。');
   }
 
-  // Familiesシート書き込み
+  // Familiesシート書き込み（line-recipients）／Tokensシートは billing-line-data
   var ss = getSpreadsheet();
-  var familiesSheet = ss.getSheetByName('Families');
+  var familiesSheet = getRecipientsSpreadsheet().getSheetByName('Families');
   var familiesData = familiesSheet.getDataRange().getValues();
   var fHeader = familiesData[0];
   var fIdx = {
@@ -715,7 +728,7 @@ function _testTriggerPermission() {
  * @return {Array} 登録済み家族の配列
  */
 function getRegisteredFamilies() {
-  var ss = getSpreadsheet();
+  var ss = getRecipientsSpreadsheet();
   var familiesSheet = ss.getSheetByName('Families');
   var studentsSheet = ss.getSheetByName('Students');
   
@@ -779,11 +792,11 @@ function unregisterFamily(familyId) {
     throw new Error('家族IDが指定されていません');
   }
   
-  var ss = getSpreadsheet();
+  var ss = getRecipientsSpreadsheet();
   var familiesSheet = ss.getSheetByName('Families');
   var familiesData = familiesSheet.getDataRange().getValues();
   var familiesHeader = familiesData[0];
-  
+
   var fIdx = {
     familyId: familiesHeader.indexOf('家族ID'),
     name: familiesHeader.indexOf('宛名'),
@@ -987,7 +1000,7 @@ function _getLineProfile(userId) {
  */
 function _isAlreadyRegisteredLineUserId(userId) {
   try {
-    var ss = getSpreadsheet();
+    var ss = getRecipientsSpreadsheet();
     var sheet = ss.getSheetByName('Families');
     var data = sheet.getDataRange().getValues();
     var header = data[0];
@@ -1156,8 +1169,8 @@ function linkMessageToFamily(rowIdx, familyId) {
   
   var ss = getSpreadsheet();
   var incoming = ss.getSheetByName('IncomingMessages');
-  var families = ss.getSheetByName('Families');
-  
+  var families = getRecipientsSpreadsheet().getSheetByName('Families');
+
   // 1. IncomingMessagesシートから該当行のLINE_USER_IDを取得
   var msgRow = incoming.getRange(rowIdx, 1, 1, 10).getValues()[0];
   var header = incoming.getRange(1, 1, 1, 10).getValues()[0];
@@ -1492,7 +1505,7 @@ function _extractPeriodFromDrawDate(drawDate) {
  */
 function _findFamilyIdForStudent(studentId) {
   try {
-    var ss = getSpreadsheet();
+    var ss = getRecipientsSpreadsheet();
     var students = ss.getSheetByName('Students');
     var data = students.getDataRange().getValues();
     var header = data[0];
@@ -1780,7 +1793,7 @@ function getBillingsByPeriod(period) {
 
     var ss = getSpreadsheet();
     var billings = ss.getSheetByName('Billings');
-    var families = ss.getSheetByName('Families');
+    var families = getRecipientsSpreadsheet().getSheetByName('Families');
 
     if (!billings || !families) {
       console.error('[getBillingsByPeriod] Billings/Familiesシートが見つかりません');
@@ -2099,8 +2112,8 @@ function executeRealBilling(period) {
   
   var ss = getSpreadsheet();
   var billings = ss.getSheetByName('Billings');
-  var families = ss.getSheetByName('Families');
-  
+  var families = getRecipientsSpreadsheet().getSheetByName('Families');
+
   if (!billings || !families) throw new Error('Billings/Familiesシートが見つかりません');
   
   var billingsData = billings.getDataRange().getValues();
@@ -2231,8 +2244,8 @@ function executeRealBillingSingle(rowIdx) {
   
   var ss = getSpreadsheet();
   var billings = ss.getSheetByName('Billings');
-  var families = ss.getSheetByName('Families');
-  
+  var families = getRecipientsSpreadsheet().getSheetByName('Families');
+
   var bHeader = billings.getRange(1, 1, 1, billings.getLastColumn()).getValues()[0];
   var bIdx = {
     familyId: bHeader.indexOf('家族ID'),
@@ -2285,11 +2298,11 @@ function preCheckRealBilling(period) {
   
   var ss = getSpreadsheet();
   var billings = ss.getSheetByName('Billings');
-  var families = ss.getSheetByName('Families');
-  
+  var families = getRecipientsSpreadsheet().getSheetByName('Families');
+
   var billingsData = billings.getDataRange().getValues();
   var familiesData = families.getDataRange().getValues();
-  
+
   var bHeader = billingsData[0];
   var bIdx = {
     period: bHeader.indexOf('配信月'),
